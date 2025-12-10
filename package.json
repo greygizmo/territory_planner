@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@types/topojson-specification": "^1.0.5"
+  }
+}

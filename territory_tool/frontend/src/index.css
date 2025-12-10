@@ -1,0 +1,207 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   Base Styles
+   ============================================================================ */
+
+:root {
+  --map-height: calc(100vh - 4rem);
+}
+
+body {
+  @apply bg-surface-900 text-surface-100 font-sans antialiased;
+  font-feature-settings: 'liga' 1, 'calt' 1;
+}
+
+/* ============================================================================
+   Scrollbar Styling
+   ============================================================================ */
+
+::-webkit-scrollbar {
+  @apply w-2 h-2;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-surface-800;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-surface-600 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-surface-500;
+}
+
+/* ============================================================================
+   Leaflet Overrides
+   ============================================================================ */
+
+.leaflet-container {
+  @apply bg-surface-800;
+  font-family: inherit;
+}
+
+.leaflet-popup-content-wrapper {
+  @apply bg-surface-800 text-surface-100 rounded-lg shadow-xl border border-surface-700;
+}
+
+.leaflet-popup-content {
+  @apply m-0 p-3;
+}
+
+.leaflet-popup-tip {
+  @apply bg-surface-800;
+}
+
+.leaflet-control-zoom {
+  @apply border-none;
+}
+
+.leaflet-control-zoom a {
+  @apply bg-surface-800 text-surface-100 border-surface-700 hover:bg-surface-700;
+}
+
+/* ============================================================================
+   Component Styles
+   ============================================================================ */
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200;
+    @apply focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface-900;
+  }
+
+  .btn-primary {
+    @apply bg-blue-600 text-white hover:bg-blue-500 focus:ring-blue-500;
+  }
+
+  .btn-secondary {
+    @apply bg-surface-700 text-surface-100 hover:bg-surface-600 focus:ring-surface-500;
+  }
+
+  .card {
+    @apply bg-surface-800 rounded-xl border border-surface-700 shadow-lg;
+  }
+
+  .input {
+    @apply bg-surface-800 border border-surface-600 rounded-lg px-3 py-2;
+    @apply text-surface-100 placeholder-surface-500;
+    @apply focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+  }
+
+  .select {
+    @apply bg-surface-800 border border-surface-600 rounded-lg px-3 py-2 pr-8;
+    @apply text-surface-100 cursor-pointer;
+    @apply focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+    background-size: 1.5em 1.5em;
+  }
+
+  .label {
+    @apply text-sm font-medium text-surface-400 mb-1 block;
+  }
+
+  .stat-value {
+    @apply text-2xl font-bold text-surface-100 font-display;
+  }
+
+  .stat-label {
+    @apply text-xs text-surface-500 uppercase tracking-wider;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .territory-card {
+    @apply card p-4 cursor-pointer transition-all duration-200;
+    @apply hover:border-surface-500 hover:shadow-xl;
+  }
+
+  .territory-card.active {
+    @apply ring-2 ring-blue-500 border-blue-500;
+  }
+
+  .scenario-tab {
+    @apply px-4 py-2 text-sm font-medium rounded-lg transition-colors;
+    @apply text-surface-400 hover:text-surface-200 hover:bg-surface-700;
+  }
+
+  .scenario-tab.active {
+    @apply bg-surface-700 text-surface-100;
+  }
+
+  .metric-bar {
+    @apply h-2 rounded-full bg-surface-700 overflow-hidden;
+  }
+
+  .metric-bar-fill {
+    @apply h-full rounded-full transition-all duration-300;
+  }
+
+  .drawer {
+    @apply fixed bottom-0 left-0 right-0 bg-surface-800 border-t border-surface-700;
+    @apply transform transition-transform duration-300 ease-in-out;
+    @apply shadow-2xl z-50;
+  }
+
+  .drawer-handle {
+    @apply absolute -top-6 left-1/2 -translate-x-1/2;
+    @apply bg-surface-700 rounded-t-lg px-8 py-1.5 cursor-pointer;
+    @apply hover:bg-surface-600 transition-colors;
+  }
+}
+
+/* ============================================================================
+   Animations
+   ============================================================================ */
+
+@keyframes pulse-gentle {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.animate-pulse-gentle {
+  animation: pulse-gentle 2s ease-in-out infinite;
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+/* ============================================================================
+   Utility Classes
+   ============================================================================ */
+
+.text-gradient {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-cyan-400;
+}
+
+.border-gradient {
+  border-image: linear-gradient(to right, #3B82F6, #06B6D4) 1;
+}
+
+.glass {
+  @apply bg-surface-800/80 backdrop-blur-lg;
+}
