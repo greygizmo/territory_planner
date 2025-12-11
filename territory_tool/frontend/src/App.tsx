@@ -284,10 +284,10 @@ function App() {
           />
         </div>
 
-        {/* Right Panel - scrolls independently */}
-        <aside className="w-96 bg-surface-800 border-l border-surface-700 flex flex-col">
-          {/* Control Panel - scrollable when content is too tall */}
-          <div className="shrink-0 max-h-[60vh] overflow-y-auto bg-surface-800">
+        {/* Right Panel - unified scroll */}
+        <aside className="w-96 bg-surface-800 border-l border-surface-700 flex flex-col overflow-y-auto">
+          {/* Control Panel */}
+          <div className="shrink-0">
             <ControlPanel
               k={k}
               setK={setK}
@@ -318,8 +318,8 @@ function App() {
             />
           </div>
 
-          {/* Territory List - scrolls independently */}
-          <div className="flex-1 min-h-0 overflow-y-auto">
+          {/* Territory List */}
+          <div className="shrink-0">
             <TerritoryList
               k={k}
               scenario={activeScenario}
