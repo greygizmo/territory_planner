@@ -16,7 +16,7 @@ class ConfigResponse(BaseModel):
     numeric_metrics: list[str]
     metric_display_names: dict[str, str] = Field(default_factory=dict)
     default_primary_metric: str = Field(default="Weighted_ICP_Value")
-    default_secondary_metric: str = Field(default="spend_12m")
+    default_secondary_metric: str = Field(default="GP_12M_Total")  # Changed from spend_12m
     grade_fields: list[str]
     industries: list[str] = Field(default_factory=list)
     industry_counts: dict[str, int] = Field(default_factory=dict)
@@ -52,21 +52,40 @@ class PriorityTierDistribution(BaseModel):
 
 
 # ============================================================================
-# Spend Dynamics
+# Financial Dynamics (renamed from SpendDynamics)
 # ============================================================================
 
-class SpendDynamics(BaseModel):
-    """Spend and engagement metrics for a territory."""
+class FinancialDynamics(BaseModel):
+    """Financial, asset, and engagement metrics for a territory."""
+    # GP time windows (primary financial metrics)
+    gp_12m: float = 0.0
+    gp_24m: float = 0.0
+    gp_36m: float = 0.0
+    gp_t4q: float = 0.0
+    gp_since_2023: float = 0.0
+    # Legacy spend (for compatibility)
     spend_12m: float = 0.0
-    spend_13w: float = 0.0
-    delta_13w_pct: float = 0.0
-    yoy_13w_pct: float = 0.0
-    gp_t4q_total: float = 0.0
-    gp_since_2023_total: float = 0.0
+    gp_12m_prior: float = 0.0
+    yoy_delta_12m: float = 0.0
+    yoy_delta_12m_pct: float = 0.0
+    # Assets under management
+    total_assets: float = 0.0
+    sw_assets: float = 0.0
+    hw_assets: float = 0.0
+    # High-touch weighted counts
+    high_touch_hw: float = 0.0
+    high_touch_cre: float = 0.0
+    high_touch_cpe: float = 0.0
+    high_touch_combined: float = 0.0
+    # Engagement scores
     trend_score: float = 0.0
     recency_score: float = 0.0
     momentum_score: float = 0.0
     engagement_health_score: float = 0.0
+
+
+# Alias for backwards compatibility
+SpendDynamics = FinancialDynamics
 
 
 # ============================================================================
@@ -80,7 +99,12 @@ class TerritoryStats(BaseModel):
     secondary_sum: float = 0.0
     account_count: int = 0
     grades: dict[str, dict[str, int]] = Field(default_factory=dict)
-    spend_dynamics: SpendDynamics = Field(default_factory=SpendDynamics)
+    # Flexible metric sums dict for any balancing metric
+    metric_sums: dict[str, float] = Field(default_factory=dict)
+    # Financial dynamics (GP, assets, high-touch)
+    financial_dynamics: FinancialDynamics = Field(default_factory=FinancialDynamics)
+    # Backwards compatibility alias
+    spend_dynamics: Optional[FinancialDynamics] = Field(default=None, exclude=True)
 
 
 # ============================================================================
@@ -123,7 +147,7 @@ class OptimizeRequest(BaseModel):
     k: int = Field(ge=2, le=50, description="Number of territories")
     granularity: str = Field(default="state", pattern="^(state|zip)$")
     primary_metric: str = Field(default="Weighted_ICP_Value")
-    secondary_metric: str = Field(default="spend_12m")
+    secondary_metric: str = Field(default="GP_12M_Total")  # Changed from spend_12m
     locked_assignments: dict[str, str] = Field(
         default_factory=dict,
         description="Pre-locked unit assignments (unit_id -> territory_id)"
@@ -135,6 +159,11 @@ class OptimizeRequest(BaseModel):
     excluded_industries: list[str] = Field(
         default_factory=list,
         description="List of industries to exclude from optimization"
+    )
+    country_filter: Optional[str] = Field(
+        default=None,
+        pattern="^(us|ca|all)?$",
+        description="Filter by country: 'us', 'ca', or 'all' (default)"
     )
     require_contiguity: bool = Field(
         default=True,
@@ -151,7 +180,7 @@ class EvaluateRequest(BaseModel):
     k: int = Field(ge=2, le=50, description="Number of territories")
     granularity: str = Field(default="state", pattern="^(state|zip)$")
     primary_metric: str = Field(default="Weighted_ICP_Value")
-    secondary_metric: str = Field(default="spend_12m")
+    secondary_metric: str = Field(default="GP_12M_Total")  # Changed from spend_12m
     assignments: dict[str, str] = Field(
         default_factory=dict,
         description="Current unit assignments (unit_id -> territory_id)"
@@ -159,6 +188,11 @@ class EvaluateRequest(BaseModel):
     excluded_industries: list[str] = Field(
         default_factory=list,
         description="List of industries to exclude from evaluation"
+    )
+    country_filter: Optional[str] = Field(
+        default=None,
+        pattern="^(us|ca|all)?$",
+        description="Filter by country: 'us', 'ca', or 'all' (default)"
     )
 
 
@@ -180,4 +214,3 @@ class EvaluateResponse(BaseModel):
 class HealthResponse(BaseModel):
     """Response for GET /health endpoint."""
     status: str = "ok"
-

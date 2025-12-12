@@ -69,7 +69,7 @@ app = FastAPI(
 # Configure CORS for frontend development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -104,13 +104,43 @@ async def get_config():
             detail="Data not loaded. Please ensure icp_scored_accounts.csv is available."
         )
     
+    # Only expose the metrics we actually want users to pick from in the UI.
+    # (The backend may still compute additional metrics for reporting.)
+    ui_metrics = [
+        # ICP
+        "Weighted_ICP_Value",
+        "Combined_ICP_Score",
+        "Hardware_ICP_Score",
+        "CRE_ICP_Score",
+        "CPE_ICP_Score",
+        # GP
+        "GP_12M_Total",
+        "GP_24M_Total",
+        "GP_36M_Total",
+        # Assets (requested set)
+        "Total_Assets",
+        "HW_Assets",
+        "CRE_Assets",
+        "CPE_Assets",
+        # A/B counts
+        "Hardware_AB_Count",
+        "CRE_AB_Count",
+        "CPE_AB_Count",
+        "Combined_AB_Count",
+        "Account_Count",
+        # Attention load (weighted)
+        "HighTouchWeighted_Combined",
+    ]
+
+    metric_display_names = {k: v for k, v in METRIC_DISPLAY_NAMES.items() if k in ui_metrics}
+
     return ConfigResponse(
         granularities=["state", "zip"],
         default_granularity="state",
-        numeric_metrics=BALANCING_METRICS,
-        metric_display_names=METRIC_DISPLAY_NAMES,
+        numeric_metrics=ui_metrics,
+        metric_display_names=metric_display_names,
         default_primary_metric="Weighted_ICP_Value",
-        default_secondary_metric="Combined_AB_Count",  # Default to A+B count as secondary
+        default_secondary_metric="GP_12M_Total",  # Changed to GP as primary financial metric
         grade_fields=GRADE_FIELDS,
         industries=store.get_unique_industries(),
         industry_counts=store.get_industry_counts(),
@@ -121,6 +151,24 @@ async def get_config():
 
 
 # ============================================================================
+# Geography Helpers
+# ============================================================================
+
+@app.get("/zip_to_state")
+async def get_zip_to_state_mapping() -> dict[str, str]:
+    """
+    Return mapping of ZIP/postal code -> state/province code.
+
+    Used by the frontend to provide a workable ZIP mode even when the map
+    visualization is state/province-level (e.g. color states by dominant ZIP assignment).
+    """
+    store = get_data_store()
+    if not store.is_loaded:
+        raise HTTPException(status_code=503, detail="Data not loaded.")
+    return store.get_zip_to_state_mapping()
+
+
+# ============================================================================
 # Optimization Endpoint (to be implemented in Phase 3)
 # ============================================================================
 
@@ -128,7 +176,7 @@ async def get_config():
 async def optimize_territories(request: OptimizeRequest):
     """
     Generate optimized territory assignments.
-    Returns three scenarios: primary-balanced, secondary-balanced, and dual-balanced.
+    Returns two scenarios: primary-balanced and secondary-balanced.
     """
     # Import here to avoid circular imports
     from optimizer import generate_scenarios, generate_zip_scenarios_via_states, check_assignments_contiguity
@@ -150,13 +198,20 @@ async def optimize_territories(request: OptimizeRequest):
             detail=f"Invalid secondary_metric. Must be one of: {BALANCING_METRICS}"
         )
     
-    # Get unit aggregates for the selected granularity (with optional industry filtering)
-    if request.excluded_industries:
+    # Get unit aggregates for the selected granularity (with optional filtering)
+    needs_filtering = request.excluded_industries or request.country_filter
+    if needs_filtering:
         aggregates = store.get_filtered_aggregates(
             request.granularity, 
-            request.excluded_industries
+            excluded_industries=request.excluded_industries,
+            country_filter=request.country_filter,
         )
-        print(f"[optimize] Filtering out industries: {request.excluded_industries}")
+        filter_msgs = []
+        if request.excluded_industries:
+            filter_msgs.append(f"industries={request.excluded_industries}")
+        if request.country_filter:
+            filter_msgs.append(f"country={request.country_filter}")
+        print(f"[optimize] Filtering: {', '.join(filter_msgs)}")
     else:
         aggregates = store.get_aggregates(request.granularity)
     
@@ -165,6 +220,33 @@ async def optimize_territories(request: OptimizeRequest):
             status_code=400,
             detail=f"No data available for granularity: {request.granularity}"
         )
+
+    # In ZIP mode, the map UI still uses state/province polygons. To support that,
+    # we allow users to send state/province codes in locked/seed assignments and
+    # expand them to ZIP-level assignments here.
+    if request.granularity == "zip":
+        zip_to_state = store.get_zip_to_state_mapping()
+        # Build inverse mapping once (state -> [zip...]) for fast expansion.
+        state_to_zips: dict[str, list[str]] = {}
+        for z, st in zip_to_state.items():
+            state_to_zips.setdefault(str(st).strip().upper(), []).append(str(z).strip())
+
+        state_keys = {str(s).strip().upper() for s in (store.get_aggregates("state") or {}).keys()}
+
+        def expand_state_assignments(assignments: dict[str, str]) -> dict[str, str]:
+            expanded: dict[str, str] = {}
+            for key, tid in (assignments or {}).items():
+                k_norm = str(key).strip().upper()
+                if k_norm in state_keys:
+                    for z in state_to_zips.get(k_norm, []):
+                        expanded[z] = tid
+                else:
+                    # Assume it is already a ZIP/postal code
+                    expanded[str(key).strip()] = tid
+            return expanded
+
+        request.locked_assignments = expand_state_assignments(request.locked_assignments)
+        request.seed_assignments = expand_state_assignments(request.seed_assignments)
 
     adjacency = get_adjacency_list(request.granularity)
     # Normalize adjacency keys to uppercase strings
@@ -213,9 +295,13 @@ async def optimize_territories(request: OptimizeRequest):
     try:
         if request.granularity == "zip":
             # For ZIP granularity, use state-based assignment for efficiency and contiguity
-            # Apply same industry filtering to state aggregates if filtering is active
-            if request.excluded_industries:
-                state_aggregates = store.get_filtered_aggregates("state", request.excluded_industries)
+            # Apply same filtering to state aggregates if filtering is active
+            if needs_filtering:
+                state_aggregates = store.get_filtered_aggregates(
+                    "state", 
+                    excluded_industries=request.excluded_industries,
+                    country_filter=request.country_filter,
+                )
             else:
                 state_aggregates = store.get_aggregates("state")
             zip_to_state = store.get_zip_to_state_mapping()
@@ -304,13 +390,40 @@ async def evaluate_assignments(request: EvaluateRequest):
             detail=f"Invalid secondary_metric. Must be one of: {BALANCING_METRICS}"
         )
     
-    # Get unit aggregates
-    aggregates = store.get_aggregates(request.granularity)
+    # Get unit aggregates (with optional filtering)
+    needs_filtering = request.excluded_industries or request.country_filter
+    if needs_filtering:
+        aggregates = store.get_filtered_aggregates(
+            request.granularity,
+            excluded_industries=request.excluded_industries,
+            country_filter=request.country_filter,
+        )
+    else:
+        aggregates = store.get_aggregates(request.granularity)
+    
     if not aggregates:
         raise HTTPException(
             status_code=400,
             detail=f"No data available for granularity: {request.granularity}"
         )
+
+    # Same ZIP-mode expansion as /optimize so manual painting on the state map works.
+    if request.granularity == "zip":
+        zip_to_state = store.get_zip_to_state_mapping()
+        state_to_zips: dict[str, list[str]] = {}
+        for z, st in zip_to_state.items():
+            state_to_zips.setdefault(str(st).strip().upper(), []).append(str(z).strip())
+        state_keys = {str(s).strip().upper() for s in (store.get_aggregates("state") or {}).keys()}
+
+        expanded: dict[str, str] = {}
+        for key, tid in (request.assignments or {}).items():
+            k_norm = str(key).strip().upper()
+            if k_norm in state_keys:
+                for z in state_to_zips.get(k_norm, []):
+                    expanded[z] = tid
+            else:
+                expanded[str(key).strip()] = tid
+        request.assignments = expanded
 
     adjacency = get_adjacency_list(request.granularity)
     

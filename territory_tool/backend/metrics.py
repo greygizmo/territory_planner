@@ -9,7 +9,7 @@ from models import (
     Scenario,
     TerritoryStats,
     FairnessMetrics,
-    SpendDynamics,
+    FinancialDynamics,
 )
 
 
@@ -241,7 +241,8 @@ def compute_territory_stats(
             secondary_sum=0.0,
             account_count=0,
             grades={},
-            spend_dynamics=SpendDynamics(),
+            metric_sums={},
+            financial_dynamics=FinancialDynamics(),
         )
     
     # Aggregate metrics across all units in this territory
@@ -249,17 +250,29 @@ def compute_territory_stats(
     secondary_sum = 0.0
     account_count = 0
     
+    # Aggregate all metric sums for flexible access
+    aggregated_metric_sums: dict[str, float] = defaultdict(float)
+    
     # For grades, collect all grades from all units
     all_grades: dict[str, list] = defaultdict(list)
     
-    # For spend dynamics, accumulate components
-    spend_12m_sum = 0.0
-    spend_13w_sum = 0.0
+    # For financial dynamics, accumulate components
+    gp_12m_sum = 0.0
+    gp_24m_sum = 0.0
+    gp_36m_sum = 0.0
     gp_t4q_sum = 0.0
     gp_2023_sum = 0.0
-    delta_13w_weighted_sum = 0.0
-    yoy_13w_weighted_sum = 0.0
-    weight_sum = 0.0
+    spend_12m_sum = 0.0
+    total_assets_sum = 0.0
+    sw_assets_sum = 0.0
+    hw_assets_sum = 0.0
+    gp_12m_prior_sum = 0.0
+    # IMPORTANT: % should NOT be summed. We'll compute YoY % from summed $ values.
+    yoy_delta_12m_sum = 0.0
+    high_touch_hw_sum = 0.0
+    high_touch_cre_sum = 0.0
+    high_touch_cpe_sum = 0.0
+    high_touch_combined_sum = 0.0
     trend_score_sum = 0.0
     recency_score_sum = 0.0
     momentum_score_sum = 0.0
@@ -272,9 +285,13 @@ def compute_territory_stats(
         unit = aggregates[unit_id]
         
         # Metrics
-        metric_sums = unit.get("metric_sums", {})
-        primary_sum += metric_sums.get(primary_metric, 0.0)
-        secondary_sum += metric_sums.get(secondary_metric, 0.0)
+        unit_metric_sums = unit.get("metric_sums", {})
+        primary_sum += unit_metric_sums.get(primary_metric, 0.0)
+        secondary_sum += unit_metric_sums.get(secondary_metric, 0.0)
+        
+        # Aggregate all metric sums
+        for metric_name, metric_value in unit_metric_sums.items():
+            aggregated_metric_sums[metric_name] += metric_value
         
         # Account count
         account_count += unit.get("account_count", 0)
@@ -284,19 +301,27 @@ def compute_territory_stats(
         for field, grades_list in unit_grades.items():
             all_grades[field].extend(grades_list)
         
-        # Spend dynamics components
-        sd = unit.get("spend_dynamics", {})
-        spend_12m_sum += sd.get("spend_12m", 0.0)
-        spend_13w_sum += sd.get("spend_13w", 0.0)
-        gp_t4q_sum += sd.get("GP_T4Q_Total", 0.0)
-        gp_2023_sum += sd.get("GP_Since_2023_Total", 0.0)
-        delta_13w_weighted_sum += sd.get("delta_13w_pct_weighted_sum", 0.0)
-        yoy_13w_weighted_sum += sd.get("yoy_13w_pct_weighted_sum", 0.0)
-        weight_sum += sd.get("weight_sum", 0.0)
-        trend_score_sum += sd.get("trend_score_sum", 0.0)
-        recency_score_sum += sd.get("recency_score_sum", 0.0)
-        momentum_score_sum += sd.get("momentum_score_sum", 0.0)
-        engagement_sum += sd.get("engagement_health_score_sum", 0.0)
+        # Financial dynamics components (using new field name)
+        fd = unit.get("financial_dynamics", unit.get("spend_dynamics", {}))
+        gp_12m_sum += fd.get("gp_12m", 0.0)
+        gp_24m_sum += fd.get("gp_24m", 0.0)
+        gp_36m_sum += fd.get("gp_36m", 0.0)
+        gp_t4q_sum += fd.get("gp_t4q", fd.get("GP_T4Q_Total", 0.0))
+        gp_2023_sum += fd.get("gp_since_2023", fd.get("GP_Since_2023_Total", 0.0))
+        spend_12m_sum += fd.get("spend_12m", 0.0)
+        total_assets_sum += fd.get("total_assets", 0.0)
+        sw_assets_sum += fd.get("sw_assets", 0.0)
+        hw_assets_sum += fd.get("hw_assets", 0.0)
+        gp_12m_prior_sum += fd.get("gp_12m_prior", 0.0)
+        yoy_delta_12m_sum += fd.get("yoy_delta_12m", 0.0)
+        high_touch_hw_sum += fd.get("high_touch_hw", 0.0)
+        high_touch_cre_sum += fd.get("high_touch_cre", 0.0)
+        high_touch_cpe_sum += fd.get("high_touch_cpe", 0.0)
+        high_touch_combined_sum += fd.get("high_touch_combined", 0.0)
+        trend_score_sum += fd.get("trend_score_sum", 0.0)
+        recency_score_sum += fd.get("recency_score_sum", 0.0)
+        momentum_score_sum += fd.get("momentum_score_sum", 0.0)
+        engagement_sum += fd.get("engagement_health_score_sum", 0.0)
     
     # Compute grade distributions
     grades_result = {}
@@ -306,28 +331,48 @@ def compute_territory_stats(
         else:
             grades_result[field] = compute_grade_distribution(grades_list)
     
-    # Compute weighted averages for percentages
-    delta_13w_pct = delta_13w_weighted_sum / weight_sum if weight_sum > 0 else 0.0
-    yoy_13w_pct = yoy_13w_weighted_sum / weight_sum if weight_sum > 0 else 0.0
-    
     # Compute simple averages for engagement scores
     trend_score = trend_score_sum / account_count if account_count > 0 else 0.0
     recency_score = recency_score_sum / account_count if account_count > 0 else 0.0
     momentum_score = momentum_score_sum / account_count if account_count > 0 else 0.0
     engagement_health = engagement_sum / account_count if account_count > 0 else 0.0
+    # Simple sums for high-touch weighted counts (already weighted at account level)
+    high_touch_hw_total = high_touch_hw_sum
+    high_touch_cre_total = high_touch_cre_sum
+    high_touch_cpe_total = high_touch_cpe_sum
+    high_touch_combined_total = high_touch_combined_sum
+
+    # YoY delta % should be computed from aggregated dollars:
+    #   (GP_12M - GP_12M_Prior) / GP_12M_Prior * 100
+    # We recompute delta from sums to avoid double-counting or dataset percent scaling issues.
+    yoy_delta_12m_total = gp_12m_sum - gp_12m_prior_sum
+    yoy_delta_12m_pct = (yoy_delta_12m_total / gp_12m_prior_sum * 100.0) if gp_12m_prior_sum != 0 else 0.0
     
-    spend_dynamics = SpendDynamics(
+    financial_dynamics = FinancialDynamics(
+        gp_12m=round(gp_12m_sum, 2),
+        gp_24m=round(gp_24m_sum, 2),
+        gp_36m=round(gp_36m_sum, 2),
+        gp_t4q=round(gp_t4q_sum, 2),
+        gp_since_2023=round(gp_2023_sum, 2),
         spend_12m=round(spend_12m_sum, 2),
-        spend_13w=round(spend_13w_sum, 2),
-        delta_13w_pct=round(delta_13w_pct, 4),
-        yoy_13w_pct=round(yoy_13w_pct, 4),
-        gp_t4q_total=round(gp_t4q_sum, 2),
-        gp_since_2023_total=round(gp_2023_sum, 2),
+        gp_12m_prior=round(gp_12m_prior_sum, 2),
+        yoy_delta_12m=round(yoy_delta_12m_total, 2),
+        yoy_delta_12m_pct=round(yoy_delta_12m_pct, 2),
+        total_assets=round(total_assets_sum, 2),
+        sw_assets=round(sw_assets_sum, 2),
+        hw_assets=round(hw_assets_sum, 2),
+        high_touch_hw=round(high_touch_hw_total, 2),
+        high_touch_cre=round(high_touch_cre_total, 2),
+        high_touch_cpe=round(high_touch_cpe_total, 2),
+        high_touch_combined=round(high_touch_combined_total, 2),
         trend_score=round(trend_score, 2),
         recency_score=round(recency_score, 2),
         momentum_score=round(momentum_score, 2),
         engagement_health_score=round(engagement_health, 2),
     )
+    
+    # Round all aggregated metric sums
+    rounded_metric_sums = {k: round(v, 2) for k, v in aggregated_metric_sums.items()}
     
     return TerritoryStats(
         territory_id=territory_id,
@@ -335,7 +380,8 @@ def compute_territory_stats(
         secondary_sum=round(secondary_sum, 2),
         account_count=account_count,
         grades=grades_result,
-        spend_dynamics=spend_dynamics,
+        metric_sums=rounded_metric_sums,
+        financial_dynamics=financial_dynamics,
     )
 
 
@@ -424,4 +470,3 @@ def compute_scenario_stats(
         contiguity_ok=contiguity_ok,
         non_contiguous_territories=non_contiguous,
     )
-

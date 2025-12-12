@@ -7,13 +7,12 @@ interface ScenarioTabsProps {
   onUseAsManual: (id: ScenarioId) => void;
 }
 
-const SCENARIO_ORDER: ScenarioId[] = ['manual', 'primary', 'secondary', 'dual'];
+const SCENARIO_ORDER: ScenarioId[] = ['manual', 'primary', 'secondary'];
 
 const SCENARIO_INFO: Record<ScenarioId, { label: string; icon: string }> = {
   manual: { label: 'Manual', icon: '✋' },
   primary: { label: 'Primary', icon: '🎯' },
   secondary: { label: 'Secondary', icon: '📊' },
-  dual: { label: 'Dual', icon: '⚖️' },
 };
 
 export default function ScenarioTabs({

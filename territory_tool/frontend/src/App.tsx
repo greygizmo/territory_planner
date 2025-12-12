@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import api from './api/client';
 import MapView from './components/MapView';
 import ControlPanel, { type CountryFilter } from './components/ControlPanel';
@@ -11,9 +11,45 @@ import type {
   ScenarioId,
 } from './types';
 
+// Debounce utility
+function useDebouncedCallback<T extends (...args: Parameters<T>) => void>(
+  callback: T,
+  delay: number
+): T {
+  const timeoutRef = useRef<number | null>(null);
+  const callbackRef = useRef(callback);
+  
+  // Update ref when callback changes
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+  
+  return useCallback((...args: Parameters<T>) => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = window.setTimeout(() => {
+      callbackRef.current(...args);
+    }, delay);
+  }, [delay]) as T;
+}
+
+// Paint mode types
+export type PaintMode = 'click' | 'brush' | 'erase';
+
 function App() {
   // Configuration from backend
   const [config, setConfig] = useState<ConfigResponse | null>(null);
+  const [zipToState, setZipToState] = useState<Record<string, string>>({});
 
   // User settings
   const [k, setK] = useState(8);
@@ -23,14 +59,16 @@ function App() {
   const [countryFilter, setCountryFilter] = useState<CountryFilter>('all');
   const [excludedIndustries, setExcludedIndustries] = useState<string[]>([]);
 
-  // Scenarios
+  // Scenarios (removed dual)
   const [scenarios, setScenarios] = useState<Record<ScenarioId, Scenario | null>>({
     manual: null,
     primary: null,
     secondary: null,
-    dual: null,
   });
   const [activeScenarioId, setActiveScenarioId] = useState<ScenarioId>('manual');
+
+  // Paint mode for brush/erase functionality
+  const [paintMode, setPaintMode] = useState<PaintMode>('click');
 
   // UI state
   const [activeTerritoryId, setActiveTerritoryId] = useState<string | null>('T1');
@@ -59,6 +97,15 @@ function App() {
         setGranularity(cfg.default_granularity);
         setPrimaryMetric(cfg.default_primary_metric);
         setSecondaryMetric(cfg.default_secondary_metric);
+        // ZIP mode needs a ZIP->state lookup for map coloring.
+        // We load it once; it’s used only when granularity === 'zip'.
+        try {
+          const z2s = await api.getZipToState();
+          setZipToState(z2s);
+        } catch (e) {
+          console.warn('Failed to load zip_to_state mapping; ZIP mode may be limited.', e);
+          setZipToState({});
+        }
         setError(null);
         setWarnings([]);
       } catch (err) {
@@ -70,30 +117,51 @@ function App() {
     loadConfig();
   }, []);
 
-  // Evaluate manual assignments when they change or settings change
-  useEffect(() => {
-    if (!config) return;
-
-    async function evaluateManual() {
+  // Debounced evaluate function to prevent excessive API calls
+  const debouncedEvaluate = useDebouncedCallback(
+    async (params: {
+      k: number;
+      granularity: string;
+      primaryMetric: string;
+      secondaryMetric: string;
+      manualAssignments: Record<string, string>;
+      excludedIndustries: string[];
+      countryFilter: CountryFilter;
+    }) => {
       try {
         const response = await api.evaluate({
-          k,
-          granularity,
-          primary_metric: primaryMetric,
-          secondary_metric: secondaryMetric,
-          assignments: manualAssignments,
-          excluded_industries: excludedIndustries,
+          k: params.k,
+          granularity: params.granularity,
+          primary_metric: params.primaryMetric,
+          secondary_metric: params.secondaryMetric,
+          assignments: params.manualAssignments,
+          excluded_industries: params.excludedIndustries,
+          country_filter: params.countryFilter,
         });
         setScenarios(prev => ({ ...prev, manual: response.scenario }));
       } catch (err) {
         console.error('Failed to evaluate manual assignments:', err);
       }
-    }
+    },
+    300 // 300ms debounce for paint mode responsiveness
+  );
 
-    evaluateManual();
-  }, [config, k, granularity, primaryMetric, secondaryMetric, manualAssignments, excludedIndustries]);
+  // Evaluate manual assignments when they change or settings change
+  useEffect(() => {
+    if (!config) return;
 
-  // Handle map click to assign/unassign units
+    debouncedEvaluate({
+      k,
+      granularity,
+      primaryMetric,
+      secondaryMetric,
+      manualAssignments,
+      excludedIndustries,
+      countryFilter,
+    });
+  }, [config, k, granularity, primaryMetric, secondaryMetric, manualAssignments, excludedIndustries, countryFilter, debouncedEvaluate]);
+
+  // Handle map interaction (click/brush/erase)
   const handleUnitClick = useCallback((unitId: string) => {
     if (!activeTerritoryId) return;
 
@@ -118,11 +186,39 @@ function App() {
     setManualAssignments(prev => {
       const newAssignments = { ...prev };
 
-      if (newAssignments[unitId] === activeTerritoryId) {
-        // Clicking same territory = unassign
+      if (paintMode === 'erase') {
+        // Erase mode: always unassign
         delete newAssignments[unitId];
+      } else if (paintMode === 'brush') {
+        // Brush mode: always assign to active territory
+        newAssignments[unitId] = activeTerritoryId;
       } else {
-        // Assign to active territory
+        // Click mode: toggle
+        if (newAssignments[unitId] === activeTerritoryId) {
+          delete newAssignments[unitId];
+        } else {
+          newAssignments[unitId] = activeTerritoryId;
+        }
+      }
+
+      return newAssignments;
+    });
+
+    // Switch to manual scenario when editing
+    setActiveScenarioId('manual');
+  }, [activeTerritoryId, selectionMode, paintMode]);
+
+  // Handle drag/hover for brush/erase modes
+  const handleUnitHover = useCallback((unitId: string, isMouseDown: boolean) => {
+    if (!isMouseDown || !activeTerritoryId || selectionMode === 'seed') return;
+    if (paintMode !== 'brush' && paintMode !== 'erase') return;
+
+    setManualAssignments(prev => {
+      const newAssignments = { ...prev };
+
+      if (paintMode === 'erase') {
+        delete newAssignments[unitId];
+      } else if (paintMode === 'brush') {
         newAssignments[unitId] = activeTerritoryId;
       }
 
@@ -131,7 +227,7 @@ function App() {
 
     // Switch to manual scenario when editing
     setActiveScenarioId('manual');
-  }, [activeTerritoryId, selectionMode]);
+  }, [activeTerritoryId, selectionMode, paintMode]);
 
   // Handle entering seed mode
   const handleSetSeedMode = useCallback(() => {
@@ -191,7 +287,24 @@ function App() {
   }, [scenarios]);
 
   // Get current assignments for map
-  const currentAssignments = activeScenario?.assignments || manualAssignments;
+  const currentAssignments = useMemo(() => {
+    // State mode: assignments already use state/province codes.
+    if (granularity !== 'zip') return activeScenario?.assignments || manualAssignments;
+
+    // ZIP mode: backend scenarios are ZIP->territory. The map uses state/province polygons,
+    // so derive a state->territory mapping using ZIP->state lookup.
+    const source = activeScenario?.assignments || {};
+    const derived: Record<string, string> = {};
+
+    for (const [zip, tid] of Object.entries(source)) {
+      const st = zipToState[zip];
+      if (!st) continue;
+      derived[st] = tid;
+    }
+
+    // Manual painting is state-based, so fall back to that if we don’t have derived.
+    return Object.keys(derived).length > 0 ? derived : manualAssignments;
+  }, [activeScenario, manualAssignments, granularity, zipToState]);
 
   // Invert seeds for MapView (UnitId -> TerritoryId)
   const seedsForMap = Object.entries(seeds).reduce((acc, [tid, uid]) => {
@@ -274,13 +387,52 @@ function App() {
       <div className="flex-1 flex overflow-hidden">
         {/* Map Area */}
         <div className="flex-1 relative">
+          {/* Paint Mode Controls */}
+          <div className="absolute top-4 left-4 z-[1000] bg-surface-800/95 backdrop-blur-sm rounded-lg p-2 flex gap-1 shadow-lg border border-surface-600">
+            <button
+              onClick={() => setPaintMode('click')}
+              className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${
+                paintMode === 'click'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-surface-700 text-surface-300 hover:bg-surface-600'
+              }`}
+              title="Click to toggle assignment"
+            >
+              👆 Click
+            </button>
+            <button
+              onClick={() => setPaintMode('brush')}
+              className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${
+                paintMode === 'brush'
+                  ? 'bg-green-600 text-white'
+                  : 'bg-surface-700 text-surface-300 hover:bg-surface-600'
+              }`}
+              title="Drag to paint territory"
+            >
+              🖌️ Brush
+            </button>
+            <button
+              onClick={() => setPaintMode('erase')}
+              className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${
+                paintMode === 'erase'
+                  ? 'bg-red-600 text-white'
+                  : 'bg-surface-700 text-surface-300 hover:bg-surface-600'
+              }`}
+              title="Drag to erase assignments"
+            >
+              🧹 Erase
+            </button>
+          </div>
+
           <MapView
             granularity={granularity}
             assignments={currentAssignments}
             seeds={seedsForMap}
             activeTerritoryId={activeTerritoryId}
             onUnitClick={handleUnitClick}
+            onUnitHover={handleUnitHover}
             countryFilter={countryFilter}
+            paintMode={paintMode}
           />
         </div>
 
@@ -310,30 +462,31 @@ function App() {
             />
 
             {/* Scenario Tabs */}
-            <ScenarioTabs
-              scenarios={scenarios}
-              activeScenarioId={activeScenarioId}
-              onSelectScenario={setActiveScenarioId}
-              onUseAsManual={handleUseAsManual}
-            />
-          </div>
+          <ScenarioTabs
+            scenarios={scenarios}
+            activeScenarioId={activeScenarioId}
+            onSelectScenario={setActiveScenarioId}
+            onUseAsManual={handleUseAsManual}
+          />
+        </div>
 
-          {/* Territory List */}
-          <div className="shrink-0">
-            <TerritoryList
-              k={k}
-              scenario={activeScenario}
-              activeTerritoryId={activeTerritoryId}
-              onSelectTerritory={setActiveTerritoryId}
-              idealPrimary={idealPrimary}
-              idealSecondary={idealSecondary}
-              primaryMetric={primaryMetric}
-              secondaryMetric={secondaryMetric}
-              seeds={seeds}
-              onSetSeedMode={handleSetSeedMode}
-              isSeedMode={selectionMode === 'seed'}
-            />
-          </div>
+        {/* Territory List */}
+        <div className="shrink-0">
+          <TerritoryList
+            k={k}
+            scenario={activeScenario}
+            activeTerritoryId={activeTerritoryId}
+            onSelectTerritory={setActiveTerritoryId}
+            idealPrimary={idealPrimary}
+            idealSecondary={idealSecondary}
+            primaryMetric={primaryMetric}
+            secondaryMetric={secondaryMetric}
+            metricDisplayNames={config.metric_display_names || {}}
+            seeds={seeds}
+            onSetSeedMode={handleSetSeedMode}
+            isSeedMode={selectionMode === 'seed'}
+          />
+        </div>
         </aside>
       </div>
 

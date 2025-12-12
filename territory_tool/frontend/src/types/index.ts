@@ -18,21 +18,39 @@ export interface ConfigResponse {
 }
 
 // ============================================================================
-// Spend Dynamics
+// Financial Dynamics (formerly Spend Dynamics)
 // ============================================================================
 
-export interface SpendDynamics {
+export interface FinancialDynamics {
+  // GP (Gross Profit) time windows
+  gp_12m: number;
+  gp_24m: number;
+  gp_36m: number;
+  gp_t4q: number;
+  gp_since_2023: number;
+  // Legacy spend field (deprecated)
   spend_12m: number;
-  spend_13w: number;
-  delta_13w_pct: number;
-  yoy_13w_pct: number;
-  gp_t4q_total: number;
-  gp_since_2023_total: number;
+  gp_12m_prior: number;
+  yoy_delta_12m: number;
+  yoy_delta_12m_pct: number;
+  // Assets
+  total_assets: number;
+  sw_assets: number;
+  hw_assets: number;
+  // High-touch weighted counts (grade weighted)
+  high_touch_hw: number;
+  high_touch_cre: number;
+  high_touch_cpe: number;
+  high_touch_combined: number;
+  // Engagement scores
   trend_score: number;
   recency_score: number;
   momentum_score: number;
   engagement_health_score: number;
 }
+
+// Backwards compatibility alias
+export type SpendDynamics = FinancialDynamics;
 
 // ============================================================================
 // Territory Statistics
@@ -48,7 +66,12 @@ export interface TerritoryStats {
   secondary_sum: number;
   account_count: number;
   grades: Record<string, GradeDistribution>;
-  spend_dynamics: SpendDynamics;
+  // Flexible metric sums for any balancing metric
+  metric_sums: Record<string, number>;
+  // Financial dynamics (GP, assets, high-touch)
+  financial_dynamics: FinancialDynamics;
+  // Backwards compatibility alias
+  spend_dynamics?: SpendDynamics;
 }
 
 // ============================================================================
@@ -92,6 +115,7 @@ export interface OptimizeRequest {
   locked_assignments: Record<string, string>;
   seed_assignments?: Record<string, string>;
   excluded_industries?: string[];
+  country_filter?: 'us' | 'ca' | 'all' | null;
   require_contiguity?: boolean;
   force_contiguity?: boolean;
 }
@@ -103,6 +127,7 @@ export interface EvaluateRequest {
   secondary_metric: string;
   assignments: Record<string, string>;
   excluded_industries?: string[];
+  country_filter?: 'us' | 'ca' | 'all' | null;
 }
 
 // ============================================================================
@@ -126,7 +151,7 @@ export interface HealthResponse {
 // UI State Types
 // ============================================================================
 
-export type ScenarioId = 'manual' | 'primary' | 'secondary' | 'dual';
+export type ScenarioId = 'manual' | 'primary' | 'secondary';
 
 export interface AppState {
   config: ConfigResponse | null;
@@ -168,4 +193,3 @@ export function getTerritoryColor(territoryId: string | null | undefined): strin
   if (!territoryId) return TERRITORY_COLORS.unassigned;
   return TERRITORY_COLORS[territoryId] || TERRITORY_COLORS.unassigned;
 }
-

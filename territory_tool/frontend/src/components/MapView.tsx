@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { MapContainer, TileLayer, GeoJSON, useMap } from 'react-leaflet';
 import type { GeoJsonObject, Feature, Geometry, FeatureCollection } from 'geojson';
 import type { Layer, PathOptions } from 'leaflet';
@@ -6,6 +6,7 @@ import { feature as topojsonFeature } from 'topojson-client';
 import type { Topology, GeometryCollection } from 'topojson-specification';
 import { getTerritoryColor } from '../types';
 import type { CountryFilter } from './ControlPanel';
+import type { PaintMode } from '../App';
 
 interface MapViewProps {
   granularity: string;
@@ -13,7 +14,9 @@ interface MapViewProps {
   seeds?: Record<string, string>; // unit_id -> territory_id
   activeTerritoryId: string | null;
   onUnitClick: (unitId: string) => void;
+  onUnitHover?: (unitId: string, isMouseDown: boolean) => void;
   countryFilter: CountryFilter;
+  paintMode?: PaintMode;
 }
 
 // Component to fit bounds when data changes
@@ -123,10 +126,35 @@ export default function MapView({
   seeds,
   activeTerritoryId,
   onUnitClick,
+  onUnitHover,
   countryFilter,
+  paintMode = 'click',
 }: MapViewProps) {
   const [geoData, setGeoData] = useState<GeoJsonObject | null>(null);
   const [loading, setLoading] = useState(true);
+  
+  // Track mouse state for paint mode
+  const isMouseDownRef = useRef(false);
+  
+  // Handle global mouse up/down tracking
+  const handleGlobalMouseDown = useCallback(() => {
+    isMouseDownRef.current = true;
+  }, []);
+  
+  const handleGlobalMouseUp = useCallback(() => {
+    isMouseDownRef.current = false;
+  }, []);
+  
+  useEffect(() => {
+    // Add global mouse event listeners for paint mode
+    document.addEventListener('mousedown', handleGlobalMouseDown);
+    document.addEventListener('mouseup', handleGlobalMouseUp);
+    
+    return () => {
+      document.removeEventListener('mousedown', handleGlobalMouseDown);
+      document.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, [handleGlobalMouseDown, handleGlobalMouseUp]);
 
   // Filter geoData based on country filter
   const filteredGeoData = useMemo(() => {
@@ -315,7 +343,7 @@ export default function MapView({
         { sticky: true }
       );
 
-      // Click handler
+      // Event handlers
       layer.on({
         click: () => {
           onUnitClick(unitId);
@@ -327,6 +355,11 @@ export default function MapView({
             color: '#fff',
           });
           target.bringToFront();
+          
+          // For brush/erase modes, trigger on hover while mouse is down
+          if ((paintMode === 'brush' || paintMode === 'erase') && onUnitHover) {
+            onUnitHover(unitId, isMouseDownRef.current);
+          }
         },
         mouseout: (e) => {
           const target = e.target;
@@ -339,7 +372,7 @@ export default function MapView({
         },
       });
     };
-  }, [assignments, activeTerritoryId, onUnitClick]);
+  }, [assignments, activeTerritoryId, onUnitClick, onUnitHover, paintMode]);
 
   // Generate unique key for GeoJSON to force re-render
   const geoJsonKey = useMemo(() => {

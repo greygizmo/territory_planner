@@ -217,7 +217,7 @@ ICP_GRADE_COLUMNS = [
 # We'll compute it based on combined ICP scores
 PRIORITY_TIER_COLUMN = "Computed_Priority_Tier"
 
-# Spend columns (numeric, currency)
+# Spend columns (numeric, currency) - legacy, prefer GP metrics
 SPEND_COLUMNS = [
     "spend_12m",
     "spend_13w",
@@ -230,10 +230,33 @@ SPEND_COLUMNS = [
     "yoy_13w_pct",
 ]
 
-# Gross profit columns
+# Gross Profit columns - primary financial metrics
 GP_COLUMNS = [
-    "GP_T4Q_Total",
-    "GP_Since_2023_Total",
+    "GP_12M_Total",     # GP over last 12 months
+    "GP_24M_Total",     # GP over last 24 months  
+    "GP_36M_Total",     # GP over last 36 months
+    "GP_T4Q_Total",     # GP trailing 4 quarters
+    "GP_Since_2023_Total",  # GP since Jan 2023
+]
+
+# Assets under management columns
+ASSET_COLUMNS = [
+    "Total_Assets",     # Total assets under management (derived)
+    "SW_Assets",        # Software assets (fallback)
+    "HW_Assets",        # Hardware assets (Qty_Scanners + Qty_Printers)
+    "CRE_Assets",       # cre_adoption_assets
+    "CPE_Assets",       # Seats_CPE / seats_CPE
+    "Asset_Count_Total",
+    "Active_Assets_Total",
+    "edu_assets",
+    "cre_adoption_assets",
+    "active_assets_total",
+    "asset_count_total",
+    "Qty_Scanners",
+    "Qty_Printers",
+    # NOTE: dataset uses "Seats_CPE" (capital S); keep both for compatibility
+    "seats_CPE",
+    "Seats_CPE",
 ]
 
 # Engagement / composite score columns
@@ -255,10 +278,11 @@ DIVISION_SPEND_COLUMNS = [
 
 # All numeric columns that should be coerced to float
 NUMERIC_COLUMNS = (
-    ICP_SCORE_COLUMNS + 
-    SPEND_COLUMNS + 
-    GP_COLUMNS + 
-    ENGAGEMENT_COLUMNS + 
+    ICP_SCORE_COLUMNS +
+    SPEND_COLUMNS +
+    GP_COLUMNS +
+    ASSET_COLUMNS +
+    ENGAGEMENT_COLUMNS +
     DIVISION_SPEND_COLUMNS
 )
 
@@ -267,33 +291,58 @@ GRADE_FIELDS = ICP_GRADE_COLUMNS + ["Computed_Priority_Tier"]
 
 # Metrics available for balancing
 BALANCING_METRICS = [
+    # ICP Score metrics
     "Combined_ICP_Score",
     "Hardware_ICP_Score",
     "CRE_ICP_Score",
     "CPE_ICP_Score",
-    "spend_12m",
-    "GP_T4Q_Total",
-    "GP_Since_2023_Total",
     "Weighted_ICP_Value",
+    # Gross Profit metrics (primary financial)
+    "GP_12M_Total",
+    "GP_24M_Total",
+    "GP_36M_Total",
+    # Assets under management (optimize on these)
+    "Total_Assets",
+    "HW_Assets",
+    "CRE_Assets",
+    "CPE_Assets",
     # A+B account count metrics (for balancing high-value accounts)
     "Hardware_AB_Count",
     "CRE_AB_Count",
     "CPE_AB_Count",
     "Combined_AB_Count",
     "Account_Count",  # Total account count
+    # Attention load (weighted counts)
+    "HighTouchWeighted_HW",
+    "HighTouchWeighted_CRE",
+    "HighTouchWeighted_CPE",
+    "HighTouchWeighted_Combined",
 ]
 
 # Metric display names for the frontend
 METRIC_DISPLAY_NAMES = {
+    # ICP metrics
     "Combined_ICP_Score": "Combined ICP Score",
     "Hardware_ICP_Score": "Hardware ICP",
     "CRE_ICP_Score": "CRE ICP",
     "CPE_ICP_Score": "CPE ICP",
-    "spend_12m": "Spend (12mo)",
-    "GP_T4Q_Total": "GP (T4Q)",
-    "GP_Since_2023_Total": "GP (Since 2023)",
     "Weighted_ICP_Value": "Weighted ICP Value",
-    "Hardware_AB_Count": "Hardware A+B Accounts",
+    # Gross Profit metrics
+    "GP_12M_Total": "GP (12 Month)",
+    "GP_24M_Total": "GP (24 Month)",
+    "GP_36M_Total": "GP (36 Month)",
+    # Assets
+    "Total_Assets": "Total Assets",
+    "HW_Assets": "Hardware Assets",
+    "CRE_Assets": "CRE Assets",
+    "CPE_Assets": "CPE Assets",
+    # Attention load (weighted counts)
+    "HighTouchWeighted_HW": "Attention Load (HW)",
+    "HighTouchWeighted_CRE": "Attention Load (CRE)",
+    "HighTouchWeighted_CPE": "Attention Load (CPE)",
+    "HighTouchWeighted_Combined": "Attention Load (All)",
+    # Account counts
+    "Hardware_AB_Count": "HW A+B Accounts",
     "CRE_AB_Count": "CRE A+B Accounts",
     "CPE_AB_Count": "CPE A+B Accounts",
     "Combined_AB_Count": "All A+B Accounts",
@@ -390,7 +439,17 @@ class DataStore:
                 self.df[col] = pd.to_numeric(self.df[col], errors="coerce").fillna(0.0)
     
     def _compute_derived_metrics(self) -> None:
-        """Compute Combined_ICP_Score, Weighted_ICP_Value, and Computed_Priority_Tier."""
+        """Compute Combined_ICP_Score, Weighted_ICP_Value, High_Touch_Score, and Computed_Priority_Tier."""
+        def _first_existing_numeric(candidates: list[str]) -> pd.Series:
+            """
+            Return the first existing column among candidates as a numeric series.
+            This handles dataset column naming drift (e.g. 'Seats_CPE' vs 'seats_CPE').
+            """
+            for col in candidates:
+                if col in self.df.columns:
+                    return self.df[col].fillna(0)
+            return pd.Series(0, index=self.df.index)
+
         # Get ICP scores, filling missing with 0
         hw = self.df.get("Hardware_ICP_Score", pd.Series(0, index=self.df.index)).fillna(0)
         cre = self.df.get("CRE_ICP_Score", pd.Series(0, index=self.df.index)).fillna(0)
@@ -406,9 +465,65 @@ class DataStore:
             0.0,
         )
         
-        # Weighted ICP Value = Combined_ICP_Score * log1p(spend_12m)
+        # Harmonize GP windows from existing spend columns if GP columns are missing/zero
         spend_12m = self.df.get("spend_12m", pd.Series(0, index=self.df.index)).fillna(0)
-        self.df["Weighted_ICP_Value"] = self.df["Combined_ICP_Score"] * np.log1p(spend_12m)
+        spend_24m = self.df.get("spend_24m", pd.Series(0, index=self.df.index)).fillna(0)
+        spend_36m = self.df.get("spend_36m", pd.Series(0, index=self.df.index)).fillna(0)
+        
+        gp_12m_series = self.df.get("GP_12M_Total", pd.Series(0, index=self.df.index)).fillna(0)
+        if gp_12m_series.sum() == 0 and spend_12m.sum() > 0:
+            gp_12m_series = spend_12m
+        self.df["GP_12M_Total"] = gp_12m_series
+        
+        gp_24m_series = self.df.get("GP_24M_Total", pd.Series(0, index=self.df.index)).fillna(0)
+        if gp_24m_series.sum() == 0 and spend_24m.sum() > 0:
+            gp_24m_series = spend_24m
+        self.df["GP_24M_Total"] = gp_24m_series
+        
+        gp_36m_series = self.df.get("GP_36M_Total", pd.Series(0, index=self.df.index)).fillna(0)
+        if gp_36m_series.sum() == 0 and spend_36m.sum() > 0:
+            gp_36m_series = spend_36m
+        self.df["GP_36M_Total"] = gp_36m_series
+        
+        # Weighted ICP Value = Combined_ICP_Score * log1p(GP_12M or spend_12m as fallback)
+        financial_base = np.where(gp_12m_series > 0, gp_12m_series, spend_12m)
+        negatives = (financial_base < 0).sum()
+        if negatives > 0:
+            print(f"[data_loader] Taking absolute value for {negatives} negative GP/spend rows before log1p")
+        financial_base = np.where(financial_base < 0, np.abs(financial_base), financial_base)
+        self.df["Weighted_ICP_Value"] = self.df["Combined_ICP_Score"] * np.log1p(financial_base)
+        self.df["Opportunity_Combined"] = self.df["Weighted_ICP_Value"]
+        
+        # Derived YoY fields from available columns
+        self.df["GP_12M_Prior"] = self.df.get("spend_12m_prior", pd.Series(0, index=self.df.index)).fillna(0)
+        self.df["GP_12M_Delta"] = self.df.get("delta_12m", pd.Series(0, index=self.df.index)).fillna(0)
+        self.df["GP_12M_Delta_Pct"] = self.df.get("delta_12m_pct", pd.Series(0, index=self.df.index)).fillna(0)
+
+        # Assets mapping per division
+        hw_assets = self.df.get("Qty_Scanners", pd.Series(0, index=self.df.index)).fillna(0) + \
+                    self.df.get("Qty_Printers", pd.Series(0, index=self.df.index)).fillna(0)
+        cre_assets = self.df.get("cre_adoption_assets", pd.Series(0, index=self.df.index)).fillna(0)
+        # NOTE: CSV uses "Seats_CPE" (capital S) but older code expected "seats_CPE".
+        cpe_assets = _first_existing_numeric(["Seats_CPE", "seats_CPE"])
+
+        self.df["HW_Assets"] = hw_assets
+        self.df["CRE_Assets"] = cre_assets
+        self.df["CPE_Assets"] = cpe_assets
+        self.df["Total_Assets"] = hw_assets + cre_assets + cpe_assets
+        self.df["Active_Assets_Total"] = self.df.get("active_assets_total", self.df["Total_Assets"]).fillna(0)
+        self.df["Asset_Count_Total"] = self.df.get("asset_count_total", self.df["Total_Assets"]).fillna(0)
+        self.df["SW_Assets"] = self.df.get("SW_Assets", pd.Series(0, index=self.df.index)).fillna(0)
+
+        # High-touch weighted counts based on grades (A=3, B=2, C=1, else 0)
+        weight_map = {"A": 3, "B": 2, "C": 1}
+        hw_grade = self.df.get("Hardware_ICP_Grade", pd.Series("", index=self.df.index)).fillna("").str.upper().map(weight_map).fillna(0)
+        cre_grade = self.df.get("CRE_ICP_Grade", pd.Series("", index=self.df.index)).fillna("").str.upper().map(weight_map).fillna(0)
+        cpe_grade = self.df.get("CPE_ICP_Grade", pd.Series("", index=self.df.index)).fillna("").str.upper().map(weight_map).fillna(0)
+
+        self.df["HighTouchWeighted_HW"] = hw_grade.astype(float)
+        self.df["HighTouchWeighted_CRE"] = cre_grade.astype(float)
+        self.df["HighTouchWeighted_CPE"] = cpe_grade.astype(float)
+        self.df["HighTouchWeighted_Combined"] = (hw_grade + cre_grade + cpe_grade).astype(float)
         
         # Compute Priority Tier based on Combined ICP Score percentiles
         # A = top 20%, B = next 20%, C = next 20%, D = next 20%, F = bottom 20%
@@ -506,26 +621,29 @@ class DataStore:
                 else:
                     grades[grade_field] = ["Blank"] * account_count
             
-            # Spend dynamics components for weighted average calculation
-            # For percentages, we need sum(value * weight) and sum(weight)
-            spend_13w_sum = float(group.get("spend_13w", pd.Series(0)).fillna(0).sum())
-            
-            spend_dynamics = {
+            # Financial dynamics components - GP time windows are primary
+            financial_dynamics = {
+                # GP time windows (primary metrics)
+                "gp_12m": float(group.get("GP_12M_Total", pd.Series(0)).fillna(0).sum()),
+                "gp_24m": float(group.get("GP_24M_Total", pd.Series(0)).fillna(0).sum()),
+                "gp_36m": float(group.get("GP_36M_Total", pd.Series(0)).fillna(0).sum()),
+                "gp_t4q": float(group.get("GP_T4Q_Total", pd.Series(0)).fillna(0).sum()),
+                "gp_since_2023": float(group.get("GP_Since_2023_Total", pd.Series(0)).fillna(0).sum()),
+                # Legacy spend (for compatibility)
                 "spend_12m": float(group.get("spend_12m", pd.Series(0)).fillna(0).sum()),
-                "spend_13w": spend_13w_sum,
-                "GP_T4Q_Total": float(group.get("GP_T4Q_Total", pd.Series(0)).fillna(0).sum()),
-                "GP_Since_2023_Total": float(group.get("GP_Since_2023_Total", pd.Series(0)).fillna(0).sum()),
-                # For weighted averages, store numerator and denominator
-                "delta_13w_pct_weighted_sum": float(
-                    (group.get("delta_13w_pct", pd.Series(0)).fillna(0) * 
-                     group.get("spend_13w", pd.Series(1)).fillna(1).clip(lower=1)).sum()
-                ),
-                "yoy_13w_pct_weighted_sum": float(
-                    (group.get("yoy_13w_pct", pd.Series(0)).fillna(0) * 
-                     group.get("spend_13w", pd.Series(1)).fillna(1).clip(lower=1)).sum()
-                ),
-                "weight_sum": float(group.get("spend_13w", pd.Series(1)).fillna(1).clip(lower=1).sum()),
-                # Simple averages for engagement scores
+                "gp_12m_prior": float(group.get("GP_12M_Prior", pd.Series(0)).fillna(0).sum()),
+                "yoy_delta_12m": float(group.get("GP_12M_Delta", pd.Series(0)).fillna(0).sum()),
+                "yoy_delta_12m_pct": float(group.get("GP_12M_Delta_Pct", pd.Series(0)).fillna(0).sum()),
+                # Assets under management
+                "total_assets": float(group.get("Total_Assets", pd.Series(0)).fillna(0).sum()),
+                "sw_assets": float(group.get("SW_Assets", pd.Series(0)).fillna(0).sum()),
+                "hw_assets": float(group.get("HW_Assets", pd.Series(0)).fillna(0).sum()),
+                # High-touch weighted counts
+                "high_touch_hw": float(group.get("HighTouchWeighted_HW", pd.Series(0)).fillna(0).sum()),
+                "high_touch_cre": float(group.get("HighTouchWeighted_CRE", pd.Series(0)).fillna(0).sum()),
+                "high_touch_cpe": float(group.get("HighTouchWeighted_CPE", pd.Series(0)).fillna(0).sum()),
+                "high_touch_combined": float(group.get("HighTouchWeighted_Combined", pd.Series(0)).fillna(0).sum()),
+                # Engagement scores (sums for averaging)
                 "trend_score_sum": float(group.get("trend_score", pd.Series(0)).fillna(0).sum()),
                 "recency_score_sum": float(group.get("recency_score", pd.Series(0)).fillna(0).sum()),
                 "momentum_score_sum": float(group.get("momentum_score", pd.Series(0)).fillna(0).sum()),
@@ -538,7 +656,7 @@ class DataStore:
                 "account_count": account_count,
                 "metric_sums": metric_sums,
                 "grades": grades,
-                "spend_dynamics": spend_dynamics,
+                "financial_dynamics": financial_dynamics,
             }
         
         return aggregates
@@ -615,21 +733,23 @@ class DataStore:
     def get_filtered_aggregates(
         self, 
         granularity: str, 
-        excluded_industries: list[str] | None = None
+        excluded_industries: list[str] | None = None,
+        country_filter: str | None = None,
     ) -> dict[str, dict]:
         """
-        Get aggregates with optional industry filtering.
-        If excluded_industries is provided, recompute aggregates excluding those industries.
+        Get aggregates with optional industry and country filtering.
+        If filters are provided, recompute aggregates on filtered data.
         
         Args:
             granularity: "state" or "zip"
             excluded_industries: List of industry names to exclude
+            country_filter: Filter by country: 'us', 'ca', or 'all'/None (default)
         
         Returns:
             Dict of unit_id -> aggregate data
         """
         # If no filtering needed, return cached aggregates
-        if not excluded_industries:
+        if not excluded_industries and not country_filter:
             return self.get_aggregates(granularity)
         
         if self.df is None:
@@ -637,9 +757,22 @@ class DataStore:
         
         # Filter dataframe
         df_filtered = self.df.copy()
+        
+        # Apply industry filter
         if "Industry" in df_filtered.columns and excluded_industries:
             mask = ~df_filtered["Industry"].isin(excluded_industries)
             df_filtered = df_filtered[mask]
+        
+        # Apply country filter
+        if country_filter and country_filter.lower() != "all":
+            if "ShippingCountry" in df_filtered.columns:
+                country_map = {
+                    "us": "_unitedStates",
+                    "ca": "_canada",
+                }
+                target_country = country_map.get(country_filter.lower())
+                if target_country:
+                    df_filtered = df_filtered[df_filtered["ShippingCountry"] == target_country]
         
         # Rebuild aggregates on filtered data
         return self._build_unit_aggregates_from_df(df_filtered, granularity)
@@ -726,23 +859,29 @@ class DataStore:
                 else:
                     grades[grade_field] = ["Blank"] * account_count
             
-            # Spend dynamics components for weighted average calculation
-            spend_13w_sum = float(group.get("spend_13w", pd.Series(0)).fillna(0).sum())
-            
-            spend_dynamics = {
+            # Financial dynamics components - GP time windows are primary
+            financial_dynamics = {
+                # GP time windows (primary metrics)
+                "gp_12m": float(group.get("GP_12M_Total", pd.Series(0)).fillna(0).sum()),
+                "gp_24m": float(group.get("GP_24M_Total", pd.Series(0)).fillna(0).sum()),
+                "gp_36m": float(group.get("GP_36M_Total", pd.Series(0)).fillna(0).sum()),
+                "gp_t4q": float(group.get("GP_T4Q_Total", pd.Series(0)).fillna(0).sum()),
+                "gp_since_2023": float(group.get("GP_Since_2023_Total", pd.Series(0)).fillna(0).sum()),
+                # Legacy spend (for compatibility)
                 "spend_12m": float(group.get("spend_12m", pd.Series(0)).fillna(0).sum()),
-                "spend_13w": spend_13w_sum,
-                "GP_T4Q_Total": float(group.get("GP_T4Q_Total", pd.Series(0)).fillna(0).sum()),
-                "GP_Since_2023_Total": float(group.get("GP_Since_2023_Total", pd.Series(0)).fillna(0).sum()),
-                "delta_13w_pct_weighted_sum": float(
-                    (group.get("delta_13w_pct", pd.Series(0)).fillna(0) * 
-                     group.get("spend_13w", pd.Series(1)).fillna(1).clip(lower=1)).sum()
-                ),
-                "yoy_13w_pct_weighted_sum": float(
-                    (group.get("yoy_13w_pct", pd.Series(0)).fillna(0) * 
-                     group.get("spend_13w", pd.Series(1)).fillna(1).clip(lower=1)).sum()
-                ),
-                "weight_sum": float(group.get("spend_13w", pd.Series(1)).fillna(1).clip(lower=1).sum()),
+                "gp_12m_prior": float(group.get("GP_12M_Prior", pd.Series(0)).fillna(0).sum()),
+                "yoy_delta_12m": float(group.get("GP_12M_Delta", pd.Series(0)).fillna(0).sum()),
+                "yoy_delta_12m_pct": float(group.get("GP_12M_Delta_Pct", pd.Series(0)).fillna(0).sum()),
+                # Assets under management
+                "total_assets": float(group.get("Total_Assets", pd.Series(0)).fillna(0).sum()),
+                "sw_assets": float(group.get("SW_Assets", pd.Series(0)).fillna(0).sum()),
+                "hw_assets": float(group.get("HW_Assets", pd.Series(0)).fillna(0).sum()),
+                # High-touch weighted counts
+                "high_touch_hw": float(group.get("HighTouchWeighted_HW", pd.Series(0)).fillna(0).sum()),
+                "high_touch_cre": float(group.get("HighTouchWeighted_CRE", pd.Series(0)).fillna(0).sum()),
+                "high_touch_cpe": float(group.get("HighTouchWeighted_CPE", pd.Series(0)).fillna(0).sum()),
+                "high_touch_combined": float(group.get("HighTouchWeighted_Combined", pd.Series(0)).fillna(0).sum()),
+                # Engagement scores (sums for averaging)
                 "trend_score_sum": float(group.get("trend_score", pd.Series(0)).fillna(0).sum()),
                 "recency_score_sum": float(group.get("recency_score", pd.Series(0)).fillna(0).sum()),
                 "momentum_score_sum": float(group.get("momentum_score", pd.Series(0)).fillna(0).sum()),
@@ -755,7 +894,7 @@ class DataStore:
                 "account_count": account_count,
                 "metric_sums": metric_sums,
                 "grades": grades,
-                "spend_dynamics": spend_dynamics,
+                "financial_dynamics": financial_dynamics,
             }
         
         return aggregates
@@ -783,4 +922,3 @@ def load_csv_data(csv_path: str | Path | None = None) -> DataStore:
     
     data_store.load_data(csv_path)
     return data_store
-

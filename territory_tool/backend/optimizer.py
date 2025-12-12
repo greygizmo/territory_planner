@@ -1,6 +1,6 @@
 """
 Territory optimization algorithms.
-Implements greedy balancing strategies for primary, secondary, and dual metrics.
+Implements greedy balancing strategies for primary and secondary metrics.
 Supports contiguity constraints to ensure territories are geographically connected.
 
 Now includes geographic-aware seed-based region growing for intuitive territory boundaries:
@@ -8,10 +8,13 @@ Now includes geographic-aware seed-based region growing for intuitive territory 
 - k=3: East/Central/West
 - k=4: Quadrants (NE, SE, SW, NW)
 - k>4: Evenly distributed geographic seeds
+
+Includes local refinement pass for improved equity via border swaps.
 """
 from collections import defaultdict
 from typing import Any
 import heapq
+import random
 from data_loader import STATE_ADJACENCY
 
 # ============================================================================
@@ -179,20 +182,21 @@ def select_geographic_seeds(
     available_units: list[str],
     k: int,
     user_seeds: dict[str, str] | None = None,
+    unit_values: dict[str, dict] | None = None,
+    variant_seed: int | None = None,
 ) -> dict[str, str]:
     """
     Select k geographically distributed seed states for territory initialization.
     
-    Strategy based on k:
-    - k=2: East/West (most eastern and most western mainland states)
-    - k=3: East/Central/West
-    - k=4: Quadrants (NE, SE, SW, NW corners)
-    - k>4: Evenly distributed by longitude
+    Strategy: value-weighted farthest-first with optional user seeds and a small
+    shuffle variant (variant_seed) to enable multi-start selection.
     
     Args:
         available_units: List of unit IDs to select seeds from
         k: Number of territories/seeds needed
         user_seeds: Optional user-specified seeds (territory_id -> unit_id)
+        unit_values: Optional unit metric map to weight seed importance
+        variant_seed: Optional seed for deterministic shuffling
         
     Returns:
         Dict mapping territory_id -> seed_unit_id
@@ -200,21 +204,23 @@ def select_geographic_seeds(
     if not available_units or k <= 0:
         return {}
     
+    rng = random.Random(variant_seed) if variant_seed is not None else None
+    units_order = list(available_units)
+    if rng:
+        rng.shuffle(units_order)
+    
     # Filter to units we have centroids for, excluding islands
     mainland_units = [
-        u for u in available_units 
+        u for u in units_order
         if u in STATE_CENTROIDS and u not in ISLAND_STATES
     ]
     
     if not mainland_units:
         # Fallback: just use first k units
         seeds = {}
-        for i, unit_id in enumerate(available_units[:k]):
+        for i, unit_id in enumerate(units_order[:k]):
             seeds[f"T{i+1}"] = unit_id
         return seeds
-    
-    # Sort by longitude (west to east)
-    sorted_by_lng = sorted(mainland_units, key=lambda u: STATE_CENTROIDS[u][0])
     
     # Start with user-provided seeds if any
     seeds = {}
@@ -222,67 +228,58 @@ def select_geographic_seeds(
     
     if user_seeds:
         for tid, unit_id in user_seeds.items():
-            if unit_id in available_units:
+            if unit_id in units_order:
                 seeds[tid] = unit_id
                 used_units.add(unit_id)
     
-    # Fill remaining seeds based on geography
-    remaining_k = k - len(seeds)
-    remaining_tids = [f"T{i+1}" for i in range(k) if f"T{i+1}" not in seeds]
-    available_for_seeds = [u for u in sorted_by_lng if u not in used_units]
-    
-    if remaining_k <= 0 or not available_for_seeds:
-        return seeds
-    
-    if remaining_k == 1:
-        # Pick the middle state
-        mid_idx = len(available_for_seeds) // 2
-        seeds[remaining_tids[0]] = available_for_seeds[mid_idx]
-    elif remaining_k == 2:
-        # West and East
-        seeds[remaining_tids[0]] = available_for_seeds[0]  # Westmost
-        seeds[remaining_tids[1]] = available_for_seeds[-1]  # Eastmost
-    elif remaining_k == 3:
-        # West, Central, East
-        mid_idx = len(available_for_seeds) // 2
-        seeds[remaining_tids[0]] = available_for_seeds[0]  # West
-        seeds[remaining_tids[1]] = available_for_seeds[mid_idx]  # Central
-        seeds[remaining_tids[2]] = available_for_seeds[-1]  # East
-    elif remaining_k == 4:
-        # Quadrants: sort by latitude to find north/south within west/east halves
-        half = len(available_for_seeds) // 2
-        west_half = available_for_seeds[:half]
-        east_half = available_for_seeds[half:]
-        
-        # Sort each half by latitude
-        west_by_lat = sorted(west_half, key=lambda u: STATE_CENTROIDS[u][1])
-        east_by_lat = sorted(east_half, key=lambda u: STATE_CENTROIDS[u][1])
-        
-        # SW, NW, SE, NE
-        if west_by_lat:
-            seeds[remaining_tids[0]] = west_by_lat[0]  # SW (south-west)
-            seeds[remaining_tids[1]] = west_by_lat[-1] if len(west_by_lat) > 1 else west_by_lat[0]  # NW
-        if east_by_lat:
-            seeds[remaining_tids[2]] = east_by_lat[0] if len(remaining_tids) > 2 else None  # SE
-            seeds[remaining_tids[3]] = east_by_lat[-1] if len(remaining_tids) > 3 and len(east_by_lat) > 1 else None  # NE
-        
-        # Clean up None values
-        seeds = {k: v for k, v in seeds.items() if v is not None}
+    # Weight by primary metric if available to bias seeds toward high-value units
+    weights: dict[str, float] = {}
+    if unit_values:
+        primary_values = [unit_values.get(u, {}).get("primary", 0.0) for u in mainland_units]
+        avg_primary = sum(primary_values) / (len(primary_values) or 1)
+        for u in mainland_units:
+            weights[u] = unit_values.get(u, {}).get("primary", 0.0) / (avg_primary + 1e-9)
     else:
-        # k > 4: Distribute evenly by longitude
-        step = max(1, len(available_for_seeds) // remaining_k)
-        for i, tid in enumerate(remaining_tids):
-            idx = min(i * step, len(available_for_seeds) - 1)
-            if available_for_seeds[idx] not in used_units:
-                seeds[tid] = available_for_seeds[idx]
-                used_units.add(available_for_seeds[idx])
+        weights = {u: 1.0 for u in mainland_units}
+    
+    selected_units = [seed for seed in seeds.values()]
+    remaining_tids = [f"T{i+1}" for i in range(k) if f"T{i+1}" not in seeds]
+    
+    # Value-weighted farthest-first selection
+    for tid in remaining_tids:
+        best_unit = None
+        best_score = -1.0
+        
+        for candidate in mainland_units:
+            if candidate in used_units:
+                continue
+            # Distance to nearest already-selected seed (encourage spread)
+            if selected_units:
+                distances = [
+                    get_geographic_distance(candidate, s)
+                    for s in selected_units
+                    if s in STATE_CENTROIDS
+                ]
+                min_dist = min(distances) if distances else 0.0
             else:
-                # Find next available
-                for u in available_for_seeds:
-                    if u not in used_units:
-                        seeds[tid] = u
-                        used_units.add(u)
-                        break
+                min_dist = 0.0
+            
+            score = weights.get(candidate, 1.0) * (1.0 + min_dist)
+            if score > best_score:
+                best_score = score
+                best_unit = candidate
+        
+        if best_unit is None:
+            # Fallback to first unused
+            for candidate in mainland_units:
+                if candidate not in used_units:
+                    best_unit = candidate
+                    break
+        
+        if best_unit:
+            seeds[tid] = best_unit
+            used_units.add(best_unit)
+            selected_units.append(best_unit)
     
     return seeds
 
@@ -314,6 +311,8 @@ def geographic_balanced(
     adjacency: dict[str, set[str]] = STATE_ADJACENCY,
     user_seeds: dict[str, str] | None = None,
     balance_weight: float = 0.5,
+    seed_variant: int | None = None,
+    geo_weight: float = 0.05,
 ) -> dict[str, str]:
     """
     Geographic region-growing optimizer that creates intuitive, contiguous territories.
@@ -334,6 +333,8 @@ def geographic_balanced(
         adjacency: Adjacency map for contiguity checks
         user_seeds: Optional user-specified seeds (territory_id -> unit_id)
         balance_weight: Weight for metric balance vs geographic expansion (0-1)
+        seed_variant: Optional shuffle seed to enable multi-start selection
+        geo_weight: Weight for geographic distance when expanding frontier
         
     Returns:
         Complete assignments dict (unit_id -> territory_id)
@@ -344,6 +345,7 @@ def geographic_balanced(
     assignments: dict[str, str] = {}
     load_primary = {tid: 0.0 for tid in territory_ids}
     territory_states: dict[str, set[str]] = {tid: set() for tid in territory_ids}
+    territory_anchor: dict[str, str] = {}
     
     # Separate all units into mainland and island categories
     all_unit_ids = set(unit_values.keys())
@@ -359,12 +361,20 @@ def geographic_balanced(
         assignments[unit_id] = tid
         load_primary[tid] += unit_values[unit_id]["primary"]
         territory_states[tid].add(unit_id)
+        if tid not in territory_anchor:
+            territory_anchor[tid] = unit_id
     
     # Track unassigned mainland units
     unassigned_mainland = mainland_units - set(assignments.keys())
     
     # Select geographic seeds from unassigned mainland units
-    seeds = select_geographic_seeds(list(unassigned_mainland), k, user_seeds)
+    seeds = select_geographic_seeds(
+        list(unassigned_mainland),
+        k,
+        user_seeds,
+        unit_values=unit_values,
+        variant_seed=seed_variant,
+    )
     
     # Helper to assign a unit to a territory
     def assign_unit(unit_id: str, tid: str):
@@ -373,6 +383,8 @@ def geographic_balanced(
         load_primary[tid] += unit_values.get(unit_id, {"primary": 0})["primary"]
         territory_states[tid].add(unit_id)
         unassigned_mainland.discard(unit_id)
+        if tid not in territory_anchor:
+            territory_anchor[tid] = unit_id
     
     # Assign seeds first
     for tid, seed_unit in seeds.items():
@@ -395,19 +407,25 @@ def geographic_balanced(
     
     # Priority queue for Voronoi-like region growing
     # Entry: (priority, counter, territory_id, unit_id)
-    # Priority = territory's current load (lower = higher priority to expand)
+    # Priority = territory's current load + geo_weight * distance to anchor
     # Counter ensures FIFO ordering for same-priority entries
     pq: list[tuple[float, int, str, str]] = []
     counter = 0
     units_in_queue: set[tuple[str, str]] = set()  # (tid, unit_id) pairs in queue
+    
+    def compute_priority(tid: str, candidate: str) -> float:
+        anchor = territory_anchor.get(tid)
+        geo_penalty = 0.0
+        if anchor:
+            geo_penalty = geo_weight * get_geographic_distance(candidate, anchor)
+        return load_primary[tid] + geo_penalty
     
     def add_neighbors_to_queue(tid: str, source_unit: str):
         """Add all unassigned neighbors of source_unit to the queue for territory tid."""
         nonlocal counter
         for neighbor in adjacency.get(source_unit, set()):
             if neighbor in unassigned_mainland and (tid, neighbor) not in units_in_queue:
-                # Priority = current load of territory (expand least-loaded first)
-                priority = load_primary[tid]
+                priority = compute_priority(tid, neighbor)
                 heapq.heappush(pq, (priority, counter, tid, neighbor))
                 units_in_queue.add((tid, neighbor))
                 counter += 1
@@ -481,41 +499,78 @@ def geographic_balanced(
                     heapq.heappush(pq, entry)
                     units_in_queue.add((tid, unit_id))
     
-    # Handle any remaining disconnected mainland units
-    # These are rare and occur when the adjacency map has gaps
-    # Use BFS to find shortest path to nearest territory, then bridge
+    # Handle any remaining disconnected mainland units with a contiguity-friendly bridge
     if unassigned_mainland:
         print(f"[geographic_balanced] {len(unassigned_mainland)} disconnected units: {list(unassigned_mainland)[:5]}")
         
-        # Find connected components of unassigned units
         remaining = set(unassigned_mainland)
-        while remaining:
-            unit = next(iter(remaining))
-            
-            # Find nearest territory and build a path to it
-            best_tid = None
-            best_dist = float('inf')
-            
+        
+        def find_best_territory(component: set[str]) -> str:
+            best_tid_local = None
+            best_dist_local = float("inf")
             for tid in territory_ids:
                 if territory_states[tid]:
                     for state in territory_states[tid]:
-                        dist = get_geographic_distance(unit, state)
-                        if dist < best_dist:
-                            best_dist = dist
-                            best_tid = tid
+                        dist = min(
+                            get_geographic_distance(unit, state)
+                            for unit in component
+                        )
+                        if dist < best_dist_local:
+                            best_dist_local = dist
+                            best_tid_local = tid
+            if best_tid_local is None:
+                best_tid_local = min(territory_ids, key=lambda t: load_primary[t])
+            return best_tid_local
+        
+        while remaining:
+            start_unit = next(iter(remaining))
+            # Build connected component
+            component = set()
+            queue = [start_unit]
+            while queue:
+                u = queue.pop(0)
+                if u in component:
+                    continue
+                component.add(u)
+                for nbr in adjacency.get(u, set()):
+                    if nbr in remaining:
+                        queue.append(nbr)
             
-            if best_tid is None:
-                best_tid = min(territory_ids, key=lambda t: load_primary[t])
+            best_tid = find_best_territory(component)
             
-            # Assign this unit to the nearest territory
-            # Note: This may break contiguity but handles edge cases
-            assign_unit(unit, best_tid)
-            remaining.discard(unit)
+            # First pass: assign units that keep contiguity
+            progress = True
+            while progress:
+                progress = False
+                for u in list(component):
+                    if u not in remaining:
+                        continue
+                    can_join = not territory_states[best_tid] or can_add_to_territory(u, territory_states[best_tid], adjacency)
+                    if can_join:
+                        assign_unit(u, best_tid)
+                        remaining.discard(u)
+                        progress = True
+            
+            # Fallback: assign any leftovers even if contiguity has to be relaxed
+            for u in list(component):
+                if u in remaining:
+                    assign_unit(u, best_tid)
+                    remaining.discard(u)
     
-    # Assign island states to least-loaded territories
+    # Assign island states to nearest anchored territories when possible
     for unit in island_units:
         if unit not in assignments:
-            best_tid = min(territory_ids, key=lambda t: load_primary[t])
+            best_tid = None
+            best_distance = float("inf")
+            for tid in territory_ids:
+                anchor = territory_anchor.get(tid)
+                if anchor:
+                    dist = get_geographic_distance(unit, anchor)
+                    if dist < best_distance:
+                        best_distance = dist
+                        best_tid = tid
+            if best_tid is None:
+                best_tid = min(territory_ids, key=lambda t: load_primary[t])
             assign_unit(unit, best_tid)
     
     return assignments
@@ -599,7 +654,10 @@ def primary_balanced(
         territory_states[best_tid].add(unit_id)
     
     if contiguity_failures:
-        print(f"[primary_balanced] Contiguity relaxed for {len(contiguity_failures)} units: {contiguity_failures[:5]}...")
+        msg = f"[primary_balanced] Contiguity relaxed for {len(contiguity_failures)} units: {contiguity_failures[:5]}..."
+        if require_contiguity:
+            raise ValueError(msg)
+        print(msg)
     
     return assignments
 
@@ -677,7 +735,10 @@ def secondary_balanced(
         territory_states[best_tid].add(unit_id)
     
     if contiguity_failures:
-        print(f"[secondary_balanced] Contiguity relaxed for {len(contiguity_failures)} units: {contiguity_failures[:5]}...")
+        msg = f"[secondary_balanced] Contiguity relaxed for {len(contiguity_failures)} units: {contiguity_failures[:5]}..."
+        if require_contiguity:
+            raise ValueError(msg)
+        print(msg)
     
     return assignments
 
@@ -791,6 +852,144 @@ def dual_balanced(
     return assignments
 
 
+# ============================================================================
+# Local Refinement Pass (Border Swaps)
+# ============================================================================
+
+def local_refinement_pass(
+    assignments: dict[str, str],
+    unit_values: dict[str, dict],
+    k: int,
+    adjacency: dict[str, set[str]],
+    max_iterations: int = 50,
+    improvement_threshold: float = 0.01,
+    locked_units: set[str] | None = None,
+) -> dict[str, str]:
+    """
+    Improve territory balance via border-swap heuristic.
+    
+    Iteratively checks if swapping border units between adjacent territories
+    improves the overall equity (reduces max-min ratio on primary metric).
+    
+    Args:
+        assignments: Current territory assignments
+        unit_values: Dict mapping unit_id -> {"primary": float, "secondary": float}
+        k: Number of territories
+        adjacency: Adjacency map for contiguity checks
+        max_iterations: Maximum refinement iterations
+        improvement_threshold: Minimum improvement ratio to continue refining
+        locked_units: Set of unit_ids that must not move
+        
+    Returns:
+        Refined assignments dict
+    """
+    territory_ids = [f"T{i+1}" for i in range(k)]
+    assignments = dict(assignments)  # Make a copy
+    locked_units = locked_units or set()
+    
+    def compute_loads() -> dict[str, float]:
+        """Compute primary load for each territory."""
+        loads = {tid: 0.0 for tid in territory_ids}
+        for unit_id, tid in assignments.items():
+            if tid in loads:
+                loads[tid] += unit_values.get(unit_id, {"primary": 0})["primary"]
+        return loads
+    
+    def build_territory_sets() -> dict[str, set[str]]:
+        terr: dict[str, set[str]] = {tid: set() for tid in territory_ids}
+        for unit_id, tid in assignments.items():
+            terr.setdefault(tid, set()).add(unit_id)
+        return terr
+    
+    def compute_max_min_ratio(loads: dict[str, float]) -> float:
+        """Compute max/min ratio of territory loads."""
+        values = [v for v in loads.values() if v > 0]
+        if not values or min(values) == 0:
+            return float('inf')
+        return max(values) / min(values)
+    
+    def get_border_units(territory_sets: dict[str, set[str]]) -> list[tuple[str, str, str]]:
+        """
+        Find all border units (units adjacent to a different territory).
+        Returns list of (unit_id, current_tid, neighbor_tid) tuples.
+        """
+        borders = []
+        for unit_id, tid in assignments.items():
+            if unit_id in locked_units:
+                continue
+            neighbors = adjacency.get(unit_id, set())
+            for neighbor in neighbors:
+                if neighbor in assignments and assignments[neighbor] != tid:
+                    borders.append((unit_id, tid, assignments[neighbor]))
+        return borders
+    
+    def would_break_contiguity(unit_id: str, from_tid: str, to_tid: str, territory_sets: dict[str, set[str]]) -> bool:
+        """
+        Check if moving unit_id from from_tid to to_tid would break contiguity.
+        """
+        # Get all units currently in from_tid
+        from_units = set(territory_sets.get(from_tid, set()))
+        from_units.discard(unit_id)  # Remove the unit we're moving
+        
+        # Check if remaining units are still contiguous
+        if len(from_units) <= 1:
+            return False  # Single unit or empty is always contiguous
+        
+        to_units = set(territory_sets.get(to_tid, set()))
+        to_units.add(unit_id)
+        
+        breaks_from = not is_territory_contiguous(from_units, adjacency)
+        breaks_to = to_units and not is_territory_contiguous(to_units, adjacency)
+        return breaks_from or breaks_to
+    
+    current_loads = compute_loads()
+    current_ratio = compute_max_min_ratio(current_loads)
+    
+    for iteration in range(max_iterations):
+        improved = False
+        territory_sets = build_territory_sets()
+        borders = get_border_units(territory_sets)
+        
+        # Try each border unit swap
+        best_swap = None
+        best_new_ratio = current_ratio
+        
+        for unit_id, from_tid, to_tid in borders:
+            # Skip island states - they shouldn't be swapped
+            if unit_id in ISLAND_STATES or unit_id in locked_units:
+                continue
+            
+            # Check if swap would break contiguity
+            if would_break_contiguity(unit_id, from_tid, to_tid, territory_sets):
+                continue
+            
+            # Compute new loads after swap
+            unit_value = unit_values.get(unit_id, {"primary": 0})["primary"]
+            new_loads = dict(current_loads)
+            new_loads[from_tid] -= unit_value
+            new_loads[to_tid] += unit_value
+            
+            # Check if this improves balance
+            new_ratio = compute_max_min_ratio(new_loads)
+            
+            if new_ratio < best_new_ratio:
+                best_new_ratio = new_ratio
+                best_swap = (unit_id, from_tid, to_tid, new_loads)
+        
+        # Apply best swap if found
+        if best_swap and (current_ratio - best_new_ratio) / current_ratio >= improvement_threshold:
+            unit_id, from_tid, to_tid, new_loads = best_swap
+            assignments[unit_id] = to_tid
+            current_loads = new_loads
+            current_ratio = best_new_ratio
+            improved = True
+        
+        if not improved:
+            break
+    
+    return assignments
+
+
 def generate_zip_scenarios_via_states(
     zip_aggregates: dict[str, dict],
     state_aggregates: dict[str, dict],
@@ -805,7 +1004,7 @@ def generate_zip_scenarios_via_states(
     Generate optimization scenarios for ZIP codes by using state-level assignments.
     
     Process:
-    1. Run geographic optimization at state level
+    1. Run geographic optimization at state level (primary and secondary scenarios)
     2. Assign each ZIP to the same territory as its parent state
     
     This ensures geographic contiguity at the state level while handling 28k+ ZIPs efficiently.
@@ -884,7 +1083,7 @@ def generate_scenarios(
     require_contiguity: bool = True,
 ) -> list[dict[str, Any]]:
     """
-    Generate three optimization scenarios respecting locked assignments.
+    Generate two optimization scenarios respecting locked assignments.
     
     Args:
         aggregates: Unit aggregates from data_loader
@@ -895,7 +1094,7 @@ def generate_scenarios(
         seed_assignments: Initial seed assignments (soft locks/start points)
         
     Returns:
-        List of three scenario dicts (primary, secondary, dual)
+        List of two scenario dicts (primary, secondary)
     """
     if seed_assignments is None:
         seed_assignments = {}
@@ -907,6 +1106,29 @@ def generate_scenarios(
             "primary": metric_sums.get(primary_metric, 0.0),
             "secondary": metric_sums.get(secondary_metric, 0.0),
         }
+    
+    # Guardrail weights: keep a small portion of the opposite metric to avoid extreme splits
+    guardrail_weight = 0.25
+    primary_vals = [vals["primary"] for vals in unit_values.values()]
+    secondary_vals = [vals["secondary"] for vals in unit_values.values()]
+    avg_primary = (sum(primary_vals) / (len(primary_vals) or 1)) or 1e-9
+    avg_secondary = (sum(secondary_vals) / (len(secondary_vals) or 1)) or 1e-9
+    
+    unit_values_primary_guarded = {
+        uid: {
+            "primary": vals["primary"] + guardrail_weight * (vals["secondary"] / avg_secondary),
+            "secondary": vals["secondary"],
+        }
+        for uid, vals in unit_values.items()
+    }
+    
+    unit_values_secondary_guarded = {
+        uid: {
+            "primary": vals["secondary"] + guardrail_weight * (vals["primary"] / avg_primary),
+            "secondary": vals["primary"],
+        }
+        for uid, vals in unit_values.items()
+    }
     
     # Filter locked assignments to valid units and territories
     valid_locks = {}
@@ -930,71 +1152,72 @@ def generate_scenarios(
         if unit_id in unit_values and tid in valid_tids:
             user_seeds_inverted[tid] = unit_id
     
-    # Generate three scenarios using geographic region-growing
+    def balance_score(assignments: dict[str, str], values: dict[str, dict]) -> float:
+        """Lower is better; combines variance and max deviation from ideal."""
+        territory_totals: dict[str, float] = defaultdict(float)
+        for unit_id, tid in assignments.items():
+            territory_totals[tid] += values.get(unit_id, {}).get("primary", 0.0)
+        target = (sum(territory_totals.values()) / k) if k else 0.0
+        if target == 0:
+            return float("inf")
+        mse = sum((load - target) ** 2 for load in territory_totals.values()) / k
+        max_dev = max(abs(load - target) for load in territory_totals.values()) / (target + 1e-9)
+        return mse + max_dev
+    
+    def run_multi_start(values: dict[str, dict]) -> dict[str, str]:
+        """Run a few seeded variants and pick the best by balance_score."""
+        seed_variants = [None, 1, 2]  # lightweight multi-start to keep runtime low
+        best_assignments = None
+        best_score = float("inf")
+        locked_keys = set(valid_locks.keys())
+        
+        for variant in seed_variants:
+            assignments_variant = geographic_balanced(
+                values,
+                k,
+                valid_locks,
+                require_contiguity=require_contiguity,
+                adjacency=adjacency,
+                user_seeds=user_seeds_inverted,
+                balance_weight=1.0,
+                seed_variant=variant,
+            )
+            
+            if require_contiguity and adjacency:
+                assignments_variant = local_refinement_pass(
+                    assignments_variant,
+                    values,
+                    k,
+                    adjacency,
+                    max_iterations=50,
+                    improvement_threshold=0.005,
+                    locked_units=locked_keys,
+                )
+            
+            score = balance_score(assignments_variant, values)
+            if score < best_score:
+                best_score = score
+                best_assignments = assignments_variant
+        
+        return best_assignments or {}
+    
+    # Generate two scenarios using geographic region-growing with guardrails
     scenarios = []
     
-    # Scenario A: Geographic Primary-balanced
-    # Uses region-growing from geographic seeds with primary metric balance
-    primary_assignments = geographic_balanced(
-        unit_values,
-        k,
-        valid_locks,
-        require_contiguity=require_contiguity,
-        adjacency=adjacency,
-        user_seeds=user_seeds_inverted,
-        balance_weight=1.0,  # Full balance on primary
-    )
+    primary_assignments = run_multi_start(unit_values_primary_guarded)
     scenarios.append({
         "id": "primary",
         "label": "Geographic Primary",
-        "description": f"Region-growing balanced on {primary_metric} (East-West distribution).",
+        "description": f"Region-growing balanced on {primary_metric} with guardrail and refinement.",
         "assignments": primary_assignments,
     })
     
-    # Scenario B: Geographic Secondary-balanced
-    # Swap primary/secondary values for secondary balancing
-    unit_values_secondary = {
-        uid: {"primary": vals["secondary"], "secondary": vals["primary"]}
-        for uid, vals in unit_values.items()
-    }
-    secondary_assignments = geographic_balanced(
-        unit_values_secondary,
-        k,
-        valid_locks,
-        require_contiguity=require_contiguity,
-        adjacency=adjacency,
-        user_seeds=user_seeds_inverted,
-        balance_weight=1.0,
-    )
+    secondary_assignments = run_multi_start(unit_values_secondary_guarded)
     scenarios.append({
         "id": "secondary",
         "label": "Geographic Secondary",
-        "description": f"Region-growing balanced on {secondary_metric} (East-West distribution).",
+        "description": f"Region-growing balanced on {secondary_metric} with guardrail and refinement.",
         "assignments": secondary_assignments,
-    })
-    
-    # Scenario C: Geographic Dual-balanced
-    # Create combined metric for dual balancing
-    unit_values_dual = {}
-    for uid, vals in unit_values.items():
-        # Combine primary (70%) and secondary (30%)
-        combined = 0.7 * vals["primary"] + 0.3 * vals["secondary"]
-        unit_values_dual[uid] = {"primary": combined, "secondary": vals["secondary"]}
-    
-    dual_assignments = geographic_balanced(
-        unit_values_dual,
-        k,
-        valid_locks,
-        require_contiguity=require_contiguity,
-        adjacency=adjacency,
-        user_seeds=user_seeds_inverted,
-        balance_weight=0.7,
-    )
-    scenarios.append({
-        "id": "dual",
-        "label": "Geographic Dual",
-        "description": f"Region-growing balanced on both metrics (70% {primary_metric}, 30% {secondary_metric}).",
-        "assignments": dual_assignments,
     })
     
     return scenarios
@@ -1030,4 +1253,3 @@ def check_assignments_contiguity(
         "non_contiguous": failures,
         "ok": len(failures) == 0,
     }
-

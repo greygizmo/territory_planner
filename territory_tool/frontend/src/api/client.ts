@@ -42,6 +42,11 @@ export async function getConfig(): Promise<ConfigResponse> {
   return handleResponse<ConfigResponse>(response);
 }
 
+export async function getZipToState(): Promise<Record<string, string>> {
+  const response = await fetch(`${API_BASE}/zip_to_state`);
+  return handleResponse<Record<string, string>>(response);
+}
+
 export async function optimize(request: OptimizeRequest): Promise<OptimizeResponse> {
   const response = await fetch(`${API_BASE}/optimize`, {
     method: 'POST',
@@ -71,6 +76,7 @@ export async function evaluate(request: EvaluateRequest): Promise<EvaluateRespon
 export const api = {
   healthCheck,
   getConfig,
+  getZipToState,
   optimize,
   evaluate,
 };

@@ -144,7 +144,7 @@ export default function InsightsDrawer({
                   </tr>
                 </thead>
                 <tbody>
-                  {(['manual', 'primary', 'secondary', 'dual'] as ScenarioId[]).map((id) => {
+                  {(['manual', 'primary', 'secondary'] as ScenarioId[]).map((id) => {
                     const s = scenarios[id];
                     if (!s) return null;
                     
@@ -199,7 +199,8 @@ export default function InsightsDrawer({
                       
                       const hwPct = getGradePercent(stats.grades?.['Hardware_ICP_Grade'], ['A', 'B']);
                       const crePct = getGradePercent(stats.grades?.['CRE_ICP_Grade'], ['A', 'B']);
-                      const prioPct = getGradePercent(stats.grades?.['Account_Priority_Tier'], ['A - Strategic', 'B - Growth']);
+                      // Backend provides a computed tier ("Computed_Priority_Tier") as simple letter grades (A/B/C/D/F).
+                      const prioPct = getGradePercent(stats.grades?.['Computed_Priority_Tier'], ['A', 'B']);
                       
                       return (
                         <tr key={tid} className="border-b border-surface-700/50 hover:bg-surface-700/30">

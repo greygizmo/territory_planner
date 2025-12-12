@@ -25,14 +25,42 @@ interface ControlPanelProps {
 
 // Fallback metric labels (used if server doesn't provide display names)
 const FALLBACK_METRIC_LABELS: Record<string, string> = {
+  // ICP Scores
   'Combined_ICP_Score': 'Combined ICP Score',
   'Hardware_ICP_Score': 'Hardware ICP',
   'CRE_ICP_Score': 'CRE ICP',
   'CPE_ICP_Score': 'CPE ICP',
-  'spend_12m': 'Spend (12mo)',
-  'GP_T4Q_Total': 'GP (T4Q)',
-  'GP_Since_2023_Total': 'GP (Since 2023)',
   'Weighted_ICP_Value': 'Weighted ICP Value',
+  // GP (Gross Profit) metrics - primary financial indicator
+  'GP_12M_Total': 'GP (12 Months)',
+  'GP_24M_Total': 'GP (24 Months)',
+  'GP_36M_Total': 'GP (36 Months)',
+  'GP_T4Q_Total': 'GP (Last 4 Quarters)',
+  'GP_Since_2023_Total': 'GP (Since 2023)',
+  // Legacy spend metric
+  'spend_12m': 'GP (12 Month, legacy)',
+  'spend_24m': 'GP (24 Month, legacy)',
+  'spend_36m': 'GP (36 Month, legacy)',
+  // YoY
+  'GP_12M_Prior': 'GP (12m Prior)',
+  'GP_12M_Delta': 'GP Δ (12m)',
+  'GP_12M_Delta_Pct': 'GP Δ% (12m)',
+  // Assets
+  'Total_Assets': 'Total Assets',
+  'SW_Assets': 'Software Assets',
+  'HW_Assets': 'Hardware Assets',
+  'CRE_Assets': 'CRE Assets',
+  'CPE_Assets': 'CPE Assets',
+  'Active_Assets_Total': 'Active Assets',
+  'Asset_Count_Total': 'Asset Count',
+  // High-touch weighted
+  'HighTouchWeighted_HW': 'High Touch (HW)',
+  'HighTouchWeighted_CRE': 'High Touch (CRE)',
+  'HighTouchWeighted_CPE': 'High Touch (CPE)',
+  'HighTouchWeighted_Combined': 'High Touch (Combined)',
+  // Opportunity alias
+  'Opportunity_Combined': 'Opportunity',
+  // Account counts by grade
   'Hardware_AB_Count': 'Hardware A+B Accounts',
   'CRE_AB_Count': 'CRE A+B Accounts',
   'CPE_AB_Count': 'CPE A+B Accounts',
@@ -152,7 +180,7 @@ export default function ControlPanel({
         <div className="flex rounded-lg bg-surface-700 p-1">
           <button
             onClick={() => setGranularity('state')}
-            className={`flex-1 px-3 py-1.5 rounded-md text-sm font-medium transition-colors
+            className={`flex-1 px-3 py-1 rounded-md text-xs font-medium transition-colors
                        ${granularity === 'state' 
                          ? 'bg-surface-600 text-white' 
                          : 'text-surface-400 hover:text-surface-200'}`}
@@ -161,10 +189,11 @@ export default function ControlPanel({
           </button>
           <button
             onClick={() => setGranularity('zip')}
-            className={`flex-1 px-3 py-1.5 rounded-md text-sm font-medium transition-colors
-                       ${granularity === 'zip' 
-                         ? 'bg-surface-600 text-white' 
+            className={`flex-1 px-3 py-1 rounded-md text-xs font-medium transition-colors
+                       ${granularity === 'zip'
+                         ? 'bg-surface-600 text-white'
                          : 'text-surface-400 hover:text-surface-200'}`}
+            title="ZIP mode uses state map; assignments are expanded to ZIPs server-side"
           >
             ZIP Code
           </button>
