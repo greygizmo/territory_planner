@@ -197,6 +197,32 @@ class EvaluateRequest(BaseModel):
 
 
 # ============================================================================
+# Export
+# ============================================================================
+
+class ExportCsvRequest(BaseModel):
+    """Request body for POST /export/csv endpoint."""
+    granularity: str = Field(default="state", pattern="^(state|zip)$")
+    primary_metric: str = Field(default="Weighted_ICP_Value")
+    secondary_metric: str = Field(default="GP_12M_Total")
+    assignments: dict[str, str] = Field(
+        default_factory=dict,
+        description="Unit assignments to export (unit_id -> territory_id)"
+    )
+    scenario_id: str = Field(default="manual", description="Scenario id (manual/primary/secondary)")
+    scenario_label: Optional[str] = Field(default=None, description="Optional scenario label for export context")
+    excluded_industries: list[str] = Field(
+        default_factory=list,
+        description="List of industries to exclude from export"
+    )
+    country_filter: Optional[str] = Field(
+        default=None,
+        pattern="^(us|ca|all)?$",
+        description="Filter by country: 'us', 'ca', or 'all' (default)"
+    )
+
+
+# ============================================================================
 # API Responses
 # ============================================================================
 

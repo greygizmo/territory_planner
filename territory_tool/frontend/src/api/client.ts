@@ -4,6 +4,7 @@ import type {
   OptimizeResponse,
   EvaluateRequest,
   EvaluateResponse,
+  ExportCsvRequest,
   HealthResponse,
 } from '../types';
 
@@ -69,6 +70,23 @@ export async function evaluate(request: EvaluateRequest): Promise<EvaluateRespon
   return handleResponse<EvaluateResponse>(response);
 }
 
+export async function exportCsv(request: ExportCsvRequest): Promise<Blob> {
+  const response = await fetch(`${API_BASE}/export/csv`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new ApiError(response.status, errorData.detail || `HTTP ${response.status}`);
+  }
+
+  return response.blob();
+}
+
 // ============================================================================
 // API Client Object
 // ============================================================================
@@ -79,8 +97,8 @@ export const api = {
   getZipToState,
   optimize,
   evaluate,
+  exportCsv,
 };
 
 export default api;
-
 

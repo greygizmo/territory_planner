@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 from data_loader import (
     load_csv_data,
@@ -24,6 +25,7 @@ from models import (
     OptimizeResponse,
     EvaluateRequest,
     EvaluateResponse,
+    ExportCsvRequest,
 )
 
 
@@ -69,7 +71,13 @@ app = FastAPI(
 # Configure CORS for frontend development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://localhost:5174"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -456,10 +464,159 @@ async def evaluate_assignments(request: EvaluateRequest):
 
 
 # ============================================================================
+# Export Endpoint
+# ============================================================================
+
+@app.post("/export/csv")
+async def export_csv(request: ExportCsvRequest):
+    """
+    Export a CSV of unit->territory assignments enriched with key per-unit metrics.
+
+    Returns one row per unit (State/ZIP) including the assigned territory and
+    a curated set of metrics useful for downstream planning in Excel.
+    """
+    import csv
+    import io
+    from datetime import datetime
+
+    store = get_data_store()
+    if not store.is_loaded:
+        raise HTTPException(status_code=503, detail="Data not loaded.")
+
+    # Validate metrics
+    if request.primary_metric not in BALANCING_METRICS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid primary_metric. Must be one of: {BALANCING_METRICS}"
+        )
+    if request.secondary_metric not in BALANCING_METRICS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid secondary_metric. Must be one of: {BALANCING_METRICS}"
+        )
+
+    needs_filtering = request.excluded_industries or request.country_filter
+    if needs_filtering:
+        aggregates = store.get_filtered_aggregates(
+            request.granularity,
+            excluded_industries=request.excluded_industries,
+            country_filter=request.country_filter,
+        )
+    else:
+        aggregates = store.get_aggregates(request.granularity)
+
+    if not aggregates:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No data available for granularity: {request.granularity}"
+        )
+
+    # Export all units in the filtered aggregate set; missing assignment = unassigned
+    unit_ids = sorted(aggregates.keys())
+    normalized_assignments = {
+        str(uid).strip().upper(): str(tid).strip()
+        for uid, tid in (request.assignments or {}).items()
+        if uid is not None
+    }
+
+    fieldnames = [
+        "scenario_id",
+        "scenario_label",
+        "territory_id",
+        "territory_name",
+        "unit_id",
+        "unit_account_count",
+        "primary_metric",
+        "primary_value",
+        "secondary_metric",
+        "secondary_value",
+        # Core planning metrics
+        "weighted_icp_value",
+        "gp_12m",
+        "gp_24m",
+        "gp_36m",
+        "gp_12m_prior",
+        "yoy_delta_12m",
+        "yoy_delta_12m_pct",
+        "hw_assets",
+        "cre_assets",
+        "cpe_assets",
+        "total_assets",
+        "high_touch_hw",
+        "high_touch_cre",
+        "high_touch_cpe",
+        "high_touch_combined",
+        "hw_ab_count",
+        "cre_ab_count",
+        "cpe_ab_count",
+        "combined_ab_count",
+    ]
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+
+    for unit_id in unit_ids:
+        unit = aggregates[unit_id]
+        metric_sums = unit.get("metric_sums", {}) or {}
+        fd = unit.get("financial_dynamics", unit.get("spend_dynamics", {})) or {}
+
+        territory_id = normalized_assignments.get(str(unit_id).strip().upper(), "") or ""
+        territory_name = ""
+        if territory_id.startswith("T") and territory_id[1:].isdigit():
+            territory_name = f"Territory {territory_id[1:]}"
+        elif territory_id:
+            territory_name = territory_id
+
+        gp_12m_prior = float(fd.get("gp_12m_prior", 0.0) or 0.0)
+        yoy_delta_12m = float(fd.get("yoy_delta_12m", 0.0) or 0.0)
+        yoy_pct = (yoy_delta_12m / (gp_12m_prior + 1e-9) * 100.0) if gp_12m_prior else 0.0
+
+        writer.writerow({
+            "scenario_id": request.scenario_id,
+            "scenario_label": request.scenario_label or request.scenario_id,
+            "territory_id": territory_id,
+            "territory_name": territory_name,
+            "unit_id": unit_id,
+            "unit_account_count": unit.get("account_count", 0),
+            "primary_metric": request.primary_metric,
+            "primary_value": float(metric_sums.get(request.primary_metric, 0.0) or 0.0),
+            "secondary_metric": request.secondary_metric,
+            "secondary_value": float(metric_sums.get(request.secondary_metric, 0.0) or 0.0),
+            "weighted_icp_value": float(metric_sums.get("Weighted_ICP_Value", 0.0) or 0.0),
+            "gp_12m": float(fd.get("gp_12m", 0.0) or 0.0),
+            "gp_24m": float(fd.get("gp_24m", 0.0) or 0.0),
+            "gp_36m": float(fd.get("gp_36m", 0.0) or 0.0),
+            "gp_12m_prior": gp_12m_prior,
+            "yoy_delta_12m": yoy_delta_12m,
+            "yoy_delta_12m_pct": yoy_pct,
+            "hw_assets": float(metric_sums.get("HW_Assets", 0.0) or 0.0),
+            "cre_assets": float(metric_sums.get("CRE_Assets", 0.0) or 0.0),
+            "cpe_assets": float(metric_sums.get("CPE_Assets", 0.0) or 0.0),
+            "total_assets": float(metric_sums.get("Total_Assets", 0.0) or 0.0),
+            "high_touch_hw": float(metric_sums.get("HighTouchWeighted_HW", 0.0) or 0.0),
+            "high_touch_cre": float(metric_sums.get("HighTouchWeighted_CRE", 0.0) or 0.0),
+            "high_touch_cpe": float(metric_sums.get("HighTouchWeighted_CPE", 0.0) or 0.0),
+            "high_touch_combined": float(metric_sums.get("HighTouchWeighted_Combined", 0.0) or 0.0),
+            "hw_ab_count": float(metric_sums.get("Hardware_AB_Count", 0.0) or 0.0),
+            "cre_ab_count": float(metric_sums.get("CRE_AB_Count", 0.0) or 0.0),
+            "cpe_ab_count": float(metric_sums.get("CPE_AB_Count", 0.0) or 0.0),
+            "combined_ab_count": float(metric_sums.get("Combined_AB_Count", 0.0) or 0.0),
+        })
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"territory_export_{request.scenario_id}_{request.granularity}_{ts}.csv"
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ============================================================================
 # Entry Point
 # ============================================================================
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

@@ -277,6 +277,53 @@ function App() {
     }
   }, [config, k, granularity, primaryMetric, secondaryMetric, manualAssignments, seeds, excludedIndustries]);
 
+  const handleExportCsv = useCallback(async () => {
+    if (!config) return;
+
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      const scenarioId = activeScenario?.id || activeScenarioId;
+      const scenarioLabel = activeScenario?.label || scenarioId;
+      const assignments = activeScenario?.assignments || manualAssignments;
+
+      const blob = await api.exportCsv({
+        granularity,
+        primary_metric: primaryMetric,
+        secondary_metric: secondaryMetric,
+        assignments,
+        scenario_id: scenarioId,
+        scenario_label: scenarioLabel,
+        excluded_industries: excludedIndustries,
+        country_filter: countryFilter,
+      });
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `territory_export_${scenarioId}_${granularity}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [
+    config,
+    activeScenario,
+    activeScenarioId,
+    countryFilter,
+    manualAssignments,
+    excludedIndustries,
+    granularity,
+    primaryMetric,
+    secondaryMetric,
+  ]);
+
   // Use scenario as manual
   const handleUseAsManual = useCallback((scenarioId: ScenarioId) => {
     const scenario = scenarios[scenarioId];
@@ -456,6 +503,7 @@ function App() {
               excludedIndustries={excludedIndustries}
               setExcludedIndustries={setExcludedIndustries}
               onOptimize={handleOptimize}
+              onExportCsv={handleExportCsv}
               isLoading={isLoading}
               countryFilter={countryFilter}
               setCountryFilter={setCountryFilter}
@@ -499,8 +547,6 @@ function App() {
         k={k}
         idealPrimary={idealPrimary}
         idealSecondary={idealSecondary}
-        primaryMetric={primaryMetric}
-        secondaryMetric={secondaryMetric}
       />
     </div>
   );

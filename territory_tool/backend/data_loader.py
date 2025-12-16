@@ -326,7 +326,7 @@ METRIC_DISPLAY_NAMES = {
     "Hardware_ICP_Score": "Hardware ICP",
     "CRE_ICP_Score": "CRE ICP",
     "CPE_ICP_Score": "CPE ICP",
-    "Weighted_ICP_Value": "Weighted ICP Value",
+    "Weighted_ICP_Value": "Opportunity (Combined)",
     # Gross Profit metrics
     "GP_12M_Total": "GP (12 Month)",
     "GP_24M_Total": "GP (24 Month)",

@@ -130,6 +130,17 @@ export interface EvaluateRequest {
   country_filter?: 'us' | 'ca' | 'all' | null;
 }
 
+export interface ExportCsvRequest {
+  granularity: string;
+  primary_metric: string;
+  secondary_metric: string;
+  assignments: Record<string, string>;
+  scenario_id: string;
+  scenario_label?: string | null;
+  excluded_industries?: string[];
+  country_filter?: 'us' | 'ca' | 'all' | null;
+}
+
 // ============================================================================
 // API Response Types
 // ============================================================================

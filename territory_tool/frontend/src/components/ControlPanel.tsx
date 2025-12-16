@@ -18,6 +18,7 @@ interface ControlPanelProps {
   excludedIndustries: string[];
   setExcludedIndustries: (industries: string[]) => void;
   onOptimize: () => void;
+  onExportCsv: () => void;
   isLoading: boolean;
   countryFilter: CountryFilter;
   setCountryFilter: (filter: CountryFilter) => void;
@@ -30,7 +31,7 @@ const FALLBACK_METRIC_LABELS: Record<string, string> = {
   'Hardware_ICP_Score': 'Hardware ICP',
   'CRE_ICP_Score': 'CRE ICP',
   'CPE_ICP_Score': 'CPE ICP',
-  'Weighted_ICP_Value': 'Weighted ICP Value',
+  'Weighted_ICP_Value': 'Opportunity (Combined)',
   // GP (Gross Profit) metrics - primary financial indicator
   'GP_12M_Total': 'GP (12 Months)',
   'GP_24M_Total': 'GP (24 Months)',
@@ -84,11 +85,26 @@ export default function ControlPanel({
   excludedIndustries,
   setExcludedIndustries,
   onOptimize,
+  onExportCsv,
   isLoading,
   countryFilter,
   setCountryFilter,
 }: ControlPanelProps) {
   const [industryFilterOpen, setIndustryFilterOpen] = useState(false);
+
+  const hiddenMetrics = new Set([
+    'Open_Cases',
+    'Recent_Interactions',
+    'High_Touch_Score',
+    'GP_T4Q_Total',
+    'GP_Since_2023_Total',
+    'spend_13w',
+    'spend_13w_hw',
+    'spend_13w_cre',
+    'spend_13w_cpe',
+  ]);
+
+  const visibleMetrics = metrics.filter((m) => !hiddenMetrics.has(m));
 
   // Get display name for a metric
   const getMetricLabel = (metric: string): string => {
@@ -209,7 +225,7 @@ export default function ControlPanel({
             onChange={(e) => setPrimaryMetric(e.target.value)}
             className="select w-full text-sm"
           >
-            {metrics.map((m) => (
+            {visibleMetrics.map((m) => (
               <option key={m} value={m}>
                 {getMetricLabel(m)}
               </option>
@@ -223,7 +239,7 @@ export default function ControlPanel({
             onChange={(e) => setSecondaryMetric(e.target.value)}
             className="select w-full text-sm"
           >
-            {metrics.map((m) => (
+            {visibleMetrics.map((m) => (
               <option key={m} value={m}>
                 {getMetricLabel(m)}
               </option>
@@ -313,27 +329,42 @@ export default function ControlPanel({
         )}
       </div>
 
-      {/* Optimize Button */}
-      <button
-        onClick={onOptimize}
-        disabled={isLoading}
-        className="btn btn-primary w-full flex items-center justify-center gap-2"
-      >
-        {isLoading ? (
-          <>
-            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-            Optimizing...
-          </>
-        ) : (
-          <>
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-                    d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            Optimize Territories
-          </>
-        )}
-      </button>
+      {/* Actions */}
+      <div className="flex gap-2">
+        <button
+          onClick={onOptimize}
+          disabled={isLoading}
+          className="btn btn-primary flex-1 flex items-center justify-center gap-2"
+        >
+          {isLoading ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              Optimizing...
+            </>
+          ) : (
+            <>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 10V3L4 14h7v7l9-11h-7z"
+                />
+              </svg>
+              Optimize
+            </>
+          )}
+        </button>
+
+        <button
+          onClick={onExportCsv}
+          disabled={isLoading}
+          className="btn btn-secondary whitespace-nowrap"
+          title="Export assignments + metrics to CSV"
+        >
+          Export CSV
+        </button>
+      </div>
     </div>
   );
 }

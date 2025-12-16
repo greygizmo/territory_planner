@@ -19,6 +19,7 @@ yarn-error.log*
 dist/
 build/
 .turbo/
+*.tsbuildinfo
 
 # Environment / secrets
 .env
@@ -30,6 +31,23 @@ build/
 *.parquet
 *.xlsx
 *.xls
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

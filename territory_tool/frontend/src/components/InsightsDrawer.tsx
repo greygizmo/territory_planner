@@ -9,8 +9,6 @@ interface InsightsDrawerProps {
   k: number;
   idealPrimary: number;
   idealSecondary: number;
-  primaryMetric: string;
-  secondaryMetric: string;
 }
 
 function formatNumber(value: number): string {
@@ -33,8 +31,6 @@ export default function InsightsDrawer({
   k,
   idealPrimary,
   idealSecondary,
-  primaryMetric,
-  secondaryMetric,
 }: InsightsDrawerProps) {
   const drawerHeight = isOpen ? 'h-80' : 'h-0';
   const territoryIds = Array.from({ length: k }, (_, i) => `T${i + 1}`);
@@ -234,5 +230,4 @@ export default function InsightsDrawer({
     </div>
   );
 }
-
 
