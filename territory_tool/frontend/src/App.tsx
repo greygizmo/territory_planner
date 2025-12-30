@@ -43,6 +43,44 @@ function useDebouncedCallback<T extends (...args: Parameters<T>) => void>(
   }, [delay]) as T;
 }
 
+function deriveStateAssignmentsFromZips(
+  zipAssignments: Record<string, string>,
+  zipToState: Record<string, string>
+): Record<string, string> {
+  const stateTerritoryCounts: Record<string, Record<string, number>> = {};
+
+  for (const [zip, territoryId] of Object.entries(zipAssignments)) {
+    if (!territoryId) continue;
+    const state = zipToState[zip];
+    if (!state) continue;
+    const stateKey = state.toUpperCase();
+    const counts = stateTerritoryCounts[stateKey] || {};
+    counts[territoryId] = (counts[territoryId] || 0) + 1;
+    stateTerritoryCounts[stateKey] = counts;
+  }
+
+  const derived: Record<string, string> = {};
+  for (const [state, counts] of Object.entries(stateTerritoryCounts)) {
+    let topTerritory = '';
+    let topCount = -1;
+    for (const [territoryId, count] of Object.entries(counts)) {
+      const isHigher = count > topCount;
+      const isTieBreaker =
+        count === topCount &&
+        territoryId.localeCompare(topTerritory, undefined, { numeric: true }) < 0;
+      if (isHigher || isTieBreaker) {
+        topTerritory = territoryId;
+        topCount = count;
+      }
+    }
+    if (topTerritory) {
+      derived[state] = topTerritory;
+    }
+  }
+
+  return derived;
+}
+
 // Paint mode types
 export type PaintMode = 'click' | 'brush' | 'erase';
 
@@ -339,15 +377,9 @@ function App() {
     if (granularity !== 'zip') return activeScenario?.assignments || manualAssignments;
 
     // ZIP mode: backend scenarios are ZIP->territory. The map uses state/province polygons,
-    // so derive a state->territory mapping using ZIP->state lookup.
+    // so derive a state->territory mapping by picking the dominant territory per state.
     const source = activeScenario?.assignments || {};
-    const derived: Record<string, string> = {};
-
-    for (const [zip, tid] of Object.entries(source)) {
-      const st = zipToState[zip];
-      if (!st) continue;
-      derived[st] = tid;
-    }
+    const derived = deriveStateAssignmentsFromZips(source, zipToState);
 
     // Manual painting is state-based, so fall back to that if we don’t have derived.
     return Object.keys(derived).length > 0 ? derived : manualAssignments;
