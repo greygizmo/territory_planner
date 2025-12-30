@@ -17,6 +17,7 @@ interface MapViewProps {
   onUnitHover?: (unitId: string, isMouseDown: boolean) => void;
   countryFilter: CountryFilter;
   paintMode?: PaintMode;
+  isSeedMode?: boolean;
 }
 
 // Component to fit bounds when data changes
@@ -129,27 +130,28 @@ export default function MapView({
   onUnitHover,
   countryFilter,
   paintMode = 'click',
+  isSeedMode = false,
 }: MapViewProps) {
   const [geoData, setGeoData] = useState<GeoJsonObject | null>(null);
   const [loading, setLoading] = useState(true);
-  
+
   // Track mouse state for paint mode
   const isMouseDownRef = useRef(false);
-  
+
   // Handle global mouse up/down tracking
   const handleGlobalMouseDown = useCallback(() => {
     isMouseDownRef.current = true;
   }, []);
-  
+
   const handleGlobalMouseUp = useCallback(() => {
     isMouseDownRef.current = false;
   }, []);
-  
+
   useEffect(() => {
     // Add global mouse event listeners for paint mode
     document.addEventListener('mousedown', handleGlobalMouseDown);
     document.addEventListener('mouseup', handleGlobalMouseUp);
-    
+
     return () => {
       document.removeEventListener('mousedown', handleGlobalMouseDown);
       document.removeEventListener('mouseup', handleGlobalMouseUp);
@@ -185,7 +187,7 @@ export default function MapView({
       try {
         // Load US states from us-atlas
         const usUrl = 'https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json';
-        
+
         // Load Canada provinces from Natural Earth via unpkg
         // Using the 110m resolution for faster loading
         const canadaUrl = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/canada.geojson';
@@ -225,22 +227,22 @@ export default function MapView({
         // Process Canada data
         if (canadaResponse.ok) {
           const canadaGeoJson = await canadaResponse.json() as FeatureCollection;
-          
+
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           canadaGeoJson.features.forEach((f: any) => {
             // Try to get the province code from various possible property names
-            const name = f.properties?.name || 
-                        f.properties?.NAME || 
-                        f.properties?.PRENAME ||
-                        f.properties?.PRNAME ||
-                        '';
-            
-            const code = PROVINCE_NAME_TO_CODE[name] || 
-                        f.properties?.postal ||
-                        f.properties?.PRUID ||
-                        f.properties?.code ||
-                        '';
-            
+            const name = f.properties?.name ||
+              f.properties?.NAME ||
+              f.properties?.PRENAME ||
+              f.properties?.PRNAME ||
+              '';
+
+            const code = PROVINCE_NAME_TO_CODE[name] ||
+              f.properties?.postal ||
+              f.properties?.PRUID ||
+              f.properties?.code ||
+              '';
+
             if (code && CANADA_PROVINCE_NAMES[code]) {
               features.push({
                 ...f,
@@ -307,7 +309,7 @@ export default function MapView({
 
       // Unassigned states/provinces have no fill, only a subtle border
       const isUnassigned = !territoryId;
-      
+
       return {
         fillColor: isUnassigned ? 'transparent' : color,
         fillOpacity: isUnassigned ? 0 : (isSeed ? 0.9 : (isActive ? 0.7 : 0.5)),
@@ -355,7 +357,7 @@ export default function MapView({
             color: '#fff',
           });
           target.bringToFront();
-          
+
           // For brush/erase modes, trigger on hover while mouse is down
           if ((paintMode === 'brush' || paintMode === 'erase') && onUnitHover) {
             onUnitHover(unitId, isMouseDownRef.current);
@@ -376,8 +378,8 @@ export default function MapView({
 
   // Generate unique key for GeoJSON to force re-render
   const geoJsonKey = useMemo(() => {
-    return `${granularity}-${countryFilter}-${Object.keys(assignments).length}-${activeTerritoryId}-${Date.now()}`;
-  }, [granularity, countryFilter, assignments, activeTerritoryId]);
+    return `${granularity}-${countryFilter}-${Object.keys(assignments).length}-${activeTerritoryId}-${isSeedMode}-${Date.now()}`;
+  }, [granularity, countryFilter, assignments, activeTerritoryId, isSeedMode]);
 
   if (loading) {
     return (

@@ -1,73 +1,176 @@
-# React + TypeScript + Vite
+# ICP Territory Builder — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React TypeScript frontend for the ICP Territory Builder. Built with Vite for fast development and modern tooling.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 🚀 Quick Start
 
-## React Compiler
+```bash
+# Install dependencies
+npm install
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+# Start development server
+npm run dev
 
-## Expanding the ESLint configuration
+# Build for production
+npm run build
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# Preview production build
+npm run preview
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The development server runs at **http://localhost:5174**.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+---
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## 🛠️ Tech Stack
+
+| Technology | Purpose |
+|------------|---------|
+| **React 18** | UI framework |
+| **TypeScript** | Type safety |
+| **Vite 5** | Build tool & dev server |
+| **Leaflet** | Interactive maps |
+| **react-leaflet** | React Leaflet bindings |
+| **TopoJSON** | Efficient map geometry |
+| **TailwindCSS** | Utility-first styling |
+
+---
+
+## 📁 Structure
+
 ```
+src/
+├── App.tsx              # Main application component
+├── App.css              # App-specific styles
+├── index.css            # Global styles (Tailwind)
+├── main.tsx             # Entry point
+├── api/
+│   └── client.ts        # API client wrapper
+├── components/
+│   ├── ControlPanel.tsx   # Settings sidebar
+│   ├── MapView.tsx        # Interactive map
+│   ├── TerritoryList.tsx  # Territory cards
+│   ├── ScenarioTabs.tsx   # Scenario tabs
+│   └── InsightsDrawer.tsx # Metrics drawer
+└── types/
+    └── index.ts         # TypeScript type definitions
+```
+
+---
+
+## 🔌 API Integration
+
+The frontend communicates with the backend at `http://localhost:8000`. The API client is in `src/api/client.ts`.
+
+### Key API Calls
+
+| Function | Endpoint | Description |
+|----------|----------|-------------|
+| `getConfig()` | GET `/config` | Load application configuration |
+| `optimize(request)` | POST `/optimize` | Generate optimized scenarios |
+| `evaluate(request)` | POST `/evaluate` | Evaluate manual assignments |
+| `exportCsv(request)` | POST `/export/csv` | Download CSV export |
+
+---
+
+## 🎨 Components
+
+### `MapView.tsx`
+Interactive Leaflet map displaying:
+- US states and Canadian provinces from TopoJSON
+- Color-coded territory assignments
+- Click-to-assign functionality
+- Tooltips with unit info
+- Locked/seed indicators
+
+### `ControlPanel.tsx`
+Settings sidebar with:
+- Territory count slider (2-50)
+- Granularity toggle (State/ZIP)
+- Metric dropdowns
+- Country filter
+- Industry exclusion
+- Optimize button
+- Export button
+
+### `TerritoryList.tsx`
+Scrollable list of territory cards:
+- Territory color indicator
+- Primary/secondary values vs ideal
+- Account count
+- Lock toggle
+- Grade distribution summary
+
+### `ScenarioTabs.tsx`
+Tab navigation:
+- Manual (user-defined)
+- Primary (primary-optimized)
+- Secondary (secondary-optimized)
+- Geographic (region-growing)
+
+### `InsightsDrawer.tsx`
+Expandable bottom drawer:
+- Global totals
+- Fairness comparison table
+- Territory detail table
+- Contiguity warnings
+
+---
+
+## 🔧 Configuration
+
+### Vite Config (`vite.config.ts`)
+
+```ts
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5174,
+  },
+})
+```
+
+### TailwindCSS (`tailwind.config.js`)
+
+Configured with:
+- Custom color palette for territories
+- Extended spacing utilities
+- Custom component classes
+
+---
+
+## 📝 TypeScript Types
+
+Key types in `src/types/index.ts`:
+
+```typescript
+interface ConfigResponse { ... }
+interface OptimizeRequest { ... }
+interface Scenario { ... }
+interface TerritoryStats { ... }
+interface FairnessMetrics { ... }
+```
+
+---
+
+## 🧪 Development
+
+### Linting
+
+```bash
+npm run lint
+```
+
+### Type Checking
+
+```bash
+npm run build  # Includes tsc type check
+```
+
+---
+
+## 📜 License
+
+Internal use only — GoEngineer Inc.

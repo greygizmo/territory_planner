@@ -18,12 +18,12 @@ function useDebouncedCallback<T extends (...args: Parameters<T>) => void>(
 ): T {
   const timeoutRef = useRef<number | null>(null);
   const callbackRef = useRef(callback);
-  
+
   // Update ref when callback changes
   useEffect(() => {
     callbackRef.current = callback;
   }, [callback]);
-  
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -32,7 +32,7 @@ function useDebouncedCallback<T extends (...args: Parameters<T>) => void>(
       }
     };
   }, []);
-  
+
   return useCallback((...args: Parameters<T>) => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
@@ -214,8 +214,6 @@ function App() {
         ...prev,
         [unitId]: activeTerritoryId
       }));
-      // Reset mode
-      setSelectionMode('assign');
       // Switch to manual scenario
       setActiveScenarioId('manual');
       return;
@@ -344,7 +342,11 @@ function App() {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      window.URL.revokeObjectURL(url);
+
+      // Delay revocation to ensure download starts in all browsers
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+      }, 100);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Export failed');
     } finally {
@@ -470,38 +472,54 @@ function App() {
           <div className="absolute top-4 left-4 z-[1000] bg-surface-800/95 backdrop-blur-sm rounded-lg p-2 flex gap-1 shadow-lg border border-surface-600">
             <button
               onClick={() => setPaintMode('click')}
-              className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${
-                paintMode === 'click'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-surface-700 text-surface-300 hover:bg-surface-600'
-              }`}
+              className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${paintMode === 'click'
+                ? 'bg-blue-600 text-white'
+                : 'bg-surface-700 text-surface-300 hover:bg-surface-600'
+                }`}
               title="Click to toggle assignment"
             >
               👆 Click
             </button>
             <button
               onClick={() => setPaintMode('brush')}
-              className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${
-                paintMode === 'brush'
-                  ? 'bg-green-600 text-white'
-                  : 'bg-surface-700 text-surface-300 hover:bg-surface-600'
-              }`}
+              className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${paintMode === 'brush'
+                ? 'bg-green-600 text-white'
+                : 'bg-surface-700 text-surface-300 hover:bg-surface-600'
+                }`}
               title="Drag to paint territory"
             >
               🖌️ Brush
             </button>
             <button
               onClick={() => setPaintMode('erase')}
-              className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${
-                paintMode === 'erase'
-                  ? 'bg-red-600 text-white'
-                  : 'bg-surface-700 text-surface-300 hover:bg-surface-600'
-              }`}
+              className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${paintMode === 'erase'
+                ? 'bg-red-600 text-white'
+                : 'bg-surface-700 text-surface-300 hover:bg-surface-600'
+                }`}
               title="Drag to erase assignments"
             >
               🧹 Erase
             </button>
           </div>
+
+          {selectionMode === 'seed' && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] flex flex-col items-center gap-2">
+              <div className="bg-amber-600 text-white px-6 py-3 rounded-full shadow-2xl border-2 border-amber-400 flex items-center gap-3 animate-pulse-slow">
+                <span className="text-lg">🎯</span>
+                <span className="font-bold">Seeding Mode: </span>
+                <span>Click a unit to set {activeTerritoryId}'s seed</span>
+                <button
+                  onClick={() => setSelectionMode('assign')}
+                  className="ml-4 bg-white/20 hover:bg-white/40 px-3 py-1 rounded text-sm font-bold transition-colors"
+                >
+                  Done
+                </button>
+              </div>
+              <p className="text-amber-200 text-xs font-medium drop-shadow-md">
+                Select other territories in the list to set their seeds
+              </p>
+            </div>
+          )}
 
           <MapView
             granularity={granularity}
@@ -512,6 +530,7 @@ function App() {
             onUnitHover={handleUnitHover}
             countryFilter={countryFilter}
             paintMode={paintMode}
+            isSeedMode={selectionMode === 'seed'}
           />
         </div>
 
@@ -542,31 +561,31 @@ function App() {
             />
 
             {/* Scenario Tabs */}
-          <ScenarioTabs
-            scenarios={scenarios}
-            activeScenarioId={activeScenarioId}
-            onSelectScenario={setActiveScenarioId}
-            onUseAsManual={handleUseAsManual}
-          />
-        </div>
+            <ScenarioTabs
+              scenarios={scenarios}
+              activeScenarioId={activeScenarioId}
+              onSelectScenario={setActiveScenarioId}
+              onUseAsManual={handleUseAsManual}
+            />
+          </div>
 
-        {/* Territory List */}
-        <div className="shrink-0">
-          <TerritoryList
-            k={k}
-            scenario={activeScenario}
-            activeTerritoryId={activeTerritoryId}
-            onSelectTerritory={setActiveTerritoryId}
-            idealPrimary={idealPrimary}
-            idealSecondary={idealSecondary}
-            primaryMetric={primaryMetric}
-            secondaryMetric={secondaryMetric}
-            metricDisplayNames={config.metric_display_names || {}}
-            seeds={seeds}
-            onSetSeedMode={handleSetSeedMode}
-            isSeedMode={selectionMode === 'seed'}
-          />
-        </div>
+          {/* Territory List */}
+          <div className="shrink-0">
+            <TerritoryList
+              k={k}
+              scenario={activeScenario}
+              activeTerritoryId={activeTerritoryId}
+              onSelectTerritory={setActiveTerritoryId}
+              idealPrimary={idealPrimary}
+              idealSecondary={idealSecondary}
+              primaryMetric={primaryMetric}
+              secondaryMetric={secondaryMetric}
+              metricDisplayNames={config.metric_display_names || {}}
+              seeds={seeds}
+              onSetSeedMode={handleSetSeedMode}
+              isSeedMode={selectionMode === 'seed'}
+            />
+          </div>
         </aside>
       </div>
 

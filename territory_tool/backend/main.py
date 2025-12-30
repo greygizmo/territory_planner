@@ -513,9 +513,30 @@ async def export_csv(request: ExportCsvRequest):
 
     # Export all units in the filtered aggregate set; missing assignment = unassigned
     unit_ids = sorted(aggregates.keys())
+    
+    # In ZIP mode, assignments from the frontend often contain state codes (manual mode).
+    # We expand these to ZIP codes to ensure the export correctly reflects the territory.
+    raw_assignments = request.assignments or {}
+    if request.granularity == "zip":
+        zip_to_state = store.get_zip_to_state_mapping()
+        state_to_zips: dict[str, list[str]] = {}
+        for z, st in zip_to_state.items():
+            state_to_zips.setdefault(str(st).strip().upper(), []).append(str(z).strip())
+        state_keys = {str(s).strip().upper() for s in (store.get_aggregates("state") or {}).keys()}
+        
+        expanded: dict[str, str] = {}
+        for key, tid in raw_assignments.items():
+            k_norm = str(key).strip().upper()
+            if k_norm in state_keys:
+                for z in state_to_zips.get(k_norm, []):
+                    expanded[z] = tid
+            else:
+                expanded[str(key).strip()] = tid
+        raw_assignments = expanded
+
     normalized_assignments = {
         str(uid).strip().upper(): str(tid).strip()
-        for uid, tid in (request.assignments or {}).items()
+        for uid, tid in raw_assignments.items()
         if uid is not None
     }
 
